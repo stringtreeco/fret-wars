@@ -1281,7 +1281,7 @@ const buildMarketId = (name: string, day: number, location: string, index: numbe
 
 const generateMarket = (day: number, location: string, runSeed: string) => {
   const rng = mulberry32(hashSeed(`${runSeed}-${day}-${location}`))
-  const count = 5 + Math.floor(rng() * 3)
+  const count = 7 + Math.floor(rng() * 3)
   const locationBias = locationModifiers[location as keyof typeof locationModifiers] ?? {
     Guitar: 0,
     Amp: 0,
@@ -1325,6 +1325,76 @@ const generateMarket = (day: number, location: string, runSeed: string) => {
       description: candidate.description,
       flavorText: candidate.flavorText,
     })
+  }
+
+  const hasLowPrice = results.some((item) => item.priceToday <= 300)
+  if (!hasLowPrice) {
+    const lowPool = marketCatalog.filter((item) => item.basePrice <= 300)
+    if (lowPool.length > 0) {
+      const base = lowPool[Math.floor(rng() * lowPool.length)]
+      const condition = pickWeighted(
+        rng,
+        Object.keys(conditionWeights) as Condition[],
+        Object.values(conditionWeights)
+      )
+      const locationDrift = locationBias[base.category] ?? 0
+      const priceToday = Math.max(
+        40,
+        Math.round(base.basePrice * (1 + (rng() - 0.5) * 0.2 + locationDrift) * conditionMultiplier[condition])
+      )
+      const slots = base.category === "Amp" ? 3 : base.category === "Guitar" ? 2 : 1
+      results[rng() < 0.5 ? 0 : results.length - 1] = {
+        id: buildMarketId(base.name, day, location, Math.floor(rng() * 1000)),
+        name: base.name,
+        category: base.category,
+        basePrice: base.basePrice,
+        priceToday,
+        trend: getTrend(priceToday, base.basePrice),
+        rarity: base.rarity,
+        condition,
+        slots,
+        scamRisk: base.scamRisk,
+        hotRisk: base.hotRisk,
+        description: base.description,
+        flavorText: base.flavorText,
+      }
+    }
+  }
+
+  const legendaryCount = results.filter((item) => item.rarity === "legendary").length
+  if (legendaryCount > 1) {
+    const indices = results
+      .map((item, index) => (item.rarity === "legendary" ? index : -1))
+      .filter((index) => index >= 0)
+    for (let i = 1; i < indices.length; i += 1) {
+      const base = pool[Math.floor(rng() * pool.length)]
+      const condition = pickWeighted(
+        rng,
+        Object.keys(conditionWeights) as Condition[],
+        Object.values(conditionWeights)
+      )
+      const locationDrift = locationBias[base.category] ?? 0
+      const priceToday = Math.max(
+        40,
+        Math.round(base.basePrice * (1 + (rng() - 0.5) * 0.3 + locationDrift) * conditionMultiplier[condition])
+      )
+      const slots = base.category === "Amp" ? 3 : base.category === "Guitar" ? 2 : 1
+      results[indices[i]] = {
+        id: buildMarketId(base.name, day, location, Math.floor(rng() * 1000)),
+        name: base.name,
+        category: base.category,
+        basePrice: base.basePrice,
+        priceToday,
+        trend: getTrend(priceToday, base.basePrice),
+        rarity: base.rarity,
+        condition,
+        slots,
+        scamRisk: base.scamRisk,
+        hotRisk: base.hotRisk,
+        description: base.description,
+        flavorText: base.flavorText,
+      }
+    }
   }
 
   return results
@@ -1635,8 +1705,8 @@ const createInitialGameState = (runSeed: string, totalDays = 30): GameState => {
     day: 1,
     totalDays,
     location: "Downtown Music Row",
-    cash: 2500,
-    inventoryCapacity: 10,
+    cash: 3000,
+    inventoryCapacity: 11,
     inventory: [],
     reputation: 60,
     heatLevel: "Low",
@@ -1927,9 +1997,84 @@ export default function FretWarsGame() {
       }
     }
     const nextDay = prev.day + 1
-    const nextMarket = generateMarket(nextDay, nextLocation, prev.runSeed)
+    let nextMarket = generateMarket(nextDay, nextLocation, prev.runSeed)
     const nextPerformanceMarket = generatePerformanceMarket(nextDay, nextLocation, prev.runSeed)
     const shiftMessage = getMarketShiftMessage(nextDay, nextLocation, prev.runSeed)
+    if (shiftMessage === "Pawn shops are flush after a touring weekend.") {
+      const rng = mulberry32(hashSeed(`${prev.runSeed}-super-deals-${nextDay}-${nextLocation}`))
+      const dealCount = rng() < 0.5 ? 1 : 2
+      const indices = nextMarket
+        .map((_, index) => index)
+        .sort(() => rng() - 0.5)
+        .slice(0, dealCount)
+      nextMarket = nextMarket.map((item, index) => {
+        if (!indices.includes(index)) return item
+        const superPrice = Math.max(30, Math.round(item.basePrice * (0.45 + rng() * 0.15)))
+        return {
+          ...item,
+          priceToday: superPrice,
+          trend: "down",
+          flavorText: `Pawn shop deal: ${item.flavorText}`,
+        }
+      })
+    } else if (shiftMessage === "Influencer hype nudges boutique prices upward.") {
+      const rng = mulberry32(hashSeed(`${prev.runSeed}-hype-${nextDay}-${nextLocation}`))
+      const hypeTargets = nextMarket
+        .map((item, index) => ({ item, index }))
+        .filter((entry) => entry.item.category === "Pedal")
+        .sort(() => rng() - 0.5)
+        .slice(0, 2)
+      const targetIndices = new Set(hypeTargets.map((entry) => entry.index))
+      nextMarket = nextMarket.map((item, index) => {
+        if (!targetIndices.has(index)) return item
+        const spike = Math.round(item.basePrice * (1.2 + rng() * 0.2))
+        return {
+          ...item,
+          priceToday: spike,
+          trend: "up",
+          flavorText: `Hype spike: ${item.flavorText}`,
+        }
+      })
+    } else if (shiftMessage === "Estate sale glut lowers vintage asking prices.") {
+      const rng = mulberry32(hashSeed(`${prev.runSeed}-estate-${nextDay}-${nextLocation}`))
+      const vintageTargets = nextMarket
+        .map((item, index) => ({ item, index }))
+        .filter(
+          (entry) =>
+            entry.item.category === "Guitar" || entry.item.category === "Amp"
+        )
+        .sort(() => rng() - 0.5)
+        .slice(0, 2)
+      const targetIndices = new Set(vintageTargets.map((entry) => entry.index))
+      nextMarket = nextMarket.map((item, index) => {
+        if (!targetIndices.has(index)) return item
+        const discount = Math.round(item.basePrice * (0.65 + rng() * 0.15))
+        return {
+          ...item,
+          priceToday: discount,
+          trend: "down",
+          flavorText: `Estate sale find: ${item.flavorText}`,
+        }
+      })
+    } else if (shiftMessage === "Collectors are quiet today. Fewer bidding wars.") {
+      const rng = mulberry32(hashSeed(`${prev.runSeed}-collectors-${nextDay}-${nextLocation}`))
+      const rareTargets = nextMarket
+        .map((item, index) => ({ item, index }))
+        .filter((entry) => entry.item.rarity === "rare" || entry.item.rarity === "legendary")
+        .sort(() => rng() - 0.5)
+        .slice(0, 2)
+      const targetIndices = new Set(rareTargets.map((entry) => entry.index))
+      nextMarket = nextMarket.map((item, index) => {
+        if (!targetIndices.has(index)) return item
+        const discount = Math.round(item.basePrice * (0.75 + rng() * 0.1))
+        return {
+          ...item,
+          priceToday: discount,
+          trend: "down",
+          flavorText: `Soft market: ${item.flavorText}`,
+        }
+      })
+    }
     const recapMessage = getMarketRecap(nextMarket)
     const cleanedFlipDays = prev.recentFlipDays.filter((day) => nextDay - day <= 5)
     const totalHeat = prev.inventory.reduce((sum, item) => sum + item.heatValue, 0)

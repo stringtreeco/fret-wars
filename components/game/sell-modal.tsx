@@ -33,6 +33,8 @@ export function SellModal({ isOpen, onClose, items, getSellPrice, onSell, onRepa
           <div className="space-y-3">
             {saleableItems.map((item) => {
               const price = getSellPrice(item)
+              const delta = price - item.purchasePrice
+              const deltaLabel = delta >= 0 ? `+${delta}` : `${delta}`
               const scareChance =
                 item.authStatus === "success" || item.condition === "Mint" ? 0.06 : 0.18
               return (
@@ -50,6 +52,9 @@ export function SellModal({ isOpen, onClose, items, getSellPrice, onSell, onRepa
                     <span className="text-sm font-semibold text-primary">
                       ${price.toLocaleString()}
                     </span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {delta >= 0 ? "Gain" : "Loss"} ${Math.abs(delta).toLocaleString()} ({deltaLabel})
                   </div>
                   <Button
                     size="sm"

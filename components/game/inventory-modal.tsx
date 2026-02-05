@@ -143,6 +143,9 @@ export function InventoryModal({
                 : `Buy Luthier Access ($${toolCosts.luthierBench})`}
             </Button>
           </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Serial Scanner cuts repo/scam risk. Price Guide flags deals. Insurance covers losses. Luthier upgrades condition.
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>Favors: {favorTokens}</span>
             <Button size="sm" variant="ghost" onClick={onCallFavor} disabled={reputation < 8}>
