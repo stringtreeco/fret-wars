@@ -94,12 +94,13 @@ export function InventoryModal({
 }: InventoryModalProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-xl border-border bg-card text-card-foreground">
+      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden border-border bg-card text-card-foreground">
         <DialogHeader>
           <DialogTitle className="text-lg text-foreground">Inventory</DialogTitle>
         </DialogHeader>
 
-        <div className="rounded-lg border border-border bg-secondary/20 p-3">
+        <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+          <div className="rounded-lg border border-border bg-secondary/20 p-3">
           <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
             Tools
           </p>
@@ -156,121 +157,121 @@ export function InventoryModal({
             </Button>
           </div>
         </div>
+          <div className="rounded-lg border border-border bg-secondary/20 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Performance Items
+            </p>
+            {performanceMarket.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No performance items today.</p>
+            ) : (
+              <div className="grid gap-2">
+                {performanceMarket.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => onBuyPerformanceItem(item)}
+                    className="flex items-center justify-between rounded-md border border-border bg-secondary px-3 py-2 text-left text-sm text-foreground transition-colors hover:border-primary/60 hover:bg-secondary/80"
+                  >
+                    <div>
+                      <div className="font-medium">{item.name}</div>
+                      <div className="text-xs text-muted-foreground">{item.description}</div>
+                    </div>
+                    <span className="text-xs text-muted-foreground">${item.cost}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {performanceItems.length > 0 && (
+              <div className="mt-2 text-xs text-muted-foreground">
+                Owned: {performanceItems.map((item) => item.name).join(", ")}
+              </div>
+            )}
+          </div>
 
-        <div className="rounded-lg border border-border bg-secondary/20 p-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-            Performance Items
-          </p>
-          {performanceMarket.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No performance items today.</p>
+          {items.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Your gig bag is empty.</p>
           ) : (
-            <div className="grid gap-2">
-              {performanceMarket.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => onBuyPerformanceItem(item)}
-                  className="flex items-center justify-between rounded-md border border-border bg-secondary px-3 py-2 text-left text-sm text-foreground transition-colors hover:border-primary/60 hover:bg-secondary/80"
-                >
-                  <div>
-                    <div className="font-medium">{item.name}</div>
-                    <div className="text-xs text-muted-foreground">{item.description}</div>
+            <div className="space-y-3">
+              {items.map((item) => {
+                const sellPrice = getSellPrice(item)
+                const authCost = getAuthCost(item)
+                const heatLabel = getHeatLabel(item.heatValue)
+                const authLabel = getAuthLabel(item)
+                const luthierLabel = getLuthierLabel(item)
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded border border-border bg-secondary/30 p-3"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="space-y-1">
+                        <div className="text-sm font-semibold text-foreground">{item.name}</div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <span>{item.category}</span>
+                          <span>{item.condition}</span>
+                          <span>{item.rarity}</span>
+                          <span>Slots: {item.slots}</span>
+                          <span>Provenance: {heatLabel}</span>
+                          <span>{authLabel}</span>
+                          {luthierLabel && <span>{luthierLabel}</span>}
+                          {item.insured && <span>Insured</span>}
+                          <span>Paid ${item.purchasePrice.toLocaleString()}</span>
+                        </div>
+                      </div>
+                      <span className="text-sm font-semibold text-primary">
+                        Sell ${sellPrice.toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => onSell(item)}
+                        disabled={item.authStatus === "pending" || item.luthierStatus === "pending"}
+                        className="min-w-[96px]"
+                      >
+                        Sell
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onAuthenticate(item)}
+                        disabled={item.authStatus !== "none" || cash < authCost}
+                        className={cn(
+                          "min-w-[140px]",
+                          item.authStatus !== "none" && "text-muted-foreground"
+                        )}
+                      >
+                        {getAuthButtonLabel(item, authCost)}
+                      </Button>
+                      {tools.luthierBench && item.luthierStatus !== "pending" && (
+                        <>
+                          {item.condition === "Project" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onLuthier(item, "Player")}
+                            >
+                              Luthier: Player (${getLuthierCost(item, "Player")})
+                            </Button>
+                          )}
+                          {item.condition === "Player" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onLuthier(item, "Mint")}
+                            >
+                              Luthier: Mint (${getLuthierCost(item, "Mint")})
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <span className="text-xs text-muted-foreground">${item.cost}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {performanceItems.length > 0 && (
-            <div className="mt-2 text-xs text-muted-foreground">
-              Owned: {performanceItems.map((item) => item.name).join(", ")}
+                )
+              })}
             </div>
           )}
         </div>
-
-        {items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Your gig bag is empty.</p>
-        ) : (
-          <div className="space-y-3">
-            {items.map((item) => {
-              const sellPrice = getSellPrice(item)
-              const authCost = getAuthCost(item)
-              const heatLabel = getHeatLabel(item.heatValue)
-              const authLabel = getAuthLabel(item)
-              const luthierLabel = getLuthierLabel(item)
-              return (
-                <div
-                  key={item.id}
-                  className="rounded border border-border bg-secondary/30 p-3"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-1">
-                      <div className="text-sm font-semibold text-foreground">{item.name}</div>
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <span>{item.category}</span>
-                        <span>{item.condition}</span>
-                        <span>{item.rarity}</span>
-                        <span>Slots: {item.slots}</span>
-                        <span>Provenance: {heatLabel}</span>
-                        <span>{authLabel}</span>
-                        {luthierLabel && <span>{luthierLabel}</span>}
-                        {item.insured && <span>Insured</span>}
-                        <span>Paid ${item.purchasePrice.toLocaleString()}</span>
-                      </div>
-                    </div>
-                    <span className="text-sm font-semibold text-primary">
-                      Sell ${sellPrice.toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      onClick={() => onSell(item)}
-                      disabled={item.authStatus === "pending" || item.luthierStatus === "pending"}
-                      className="min-w-[96px]"
-                    >
-                      Sell
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => onAuthenticate(item)}
-                      disabled={item.authStatus !== "none" || cash < authCost}
-                      className={cn(
-                        "min-w-[140px]",
-                        item.authStatus !== "none" && "text-muted-foreground"
-                      )}
-                    >
-                      {getAuthButtonLabel(item, authCost)}
-                    </Button>
-                    {tools.luthierBench && item.luthierStatus !== "pending" && (
-                      <>
-                        {item.condition === "Project" && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onLuthier(item, "Player")}
-                          >
-                            Luthier: Player (${getLuthierCost(item, "Player")})
-                          </Button>
-                        )}
-                        {item.condition === "Player" && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onLuthier(item, "Mint")}
-                          >
-                            Luthier: Mint (${getLuthierCost(item, "Mint")})
-                          </Button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
 
         <div className="flex flex-col gap-2 text-xs text-muted-foreground">
           <div>Reputation {reputation} • Cash ${cash.toLocaleString()}</div>

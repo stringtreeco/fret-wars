@@ -1748,6 +1748,7 @@ export default function FretWarsGame() {
   const [showHelp, setShowHelp] = useState(false)
   const [runLength, setRunLength] = useState(30)
   const terminalRef = useRef<HTMLDivElement>(null)
+  const didHydrateRef = useRef(false)
   const isSelectedInspected = selectedItem
     ? gameState.inspectedMarketIds.includes(selectedItem.id)
     : false
@@ -1823,8 +1824,12 @@ export default function FretWarsGame() {
   }, [gameState])
 
   useEffect(() => {
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight
+    if (!terminalRef.current) return
+    const el = terminalRef.current
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    if (!didHydrateRef.current || isNearBottom) {
+      el.scrollTop = el.scrollHeight
+      didHydrateRef.current = true
     }
   }, [gameState.messages])
 
