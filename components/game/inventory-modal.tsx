@@ -272,8 +272,11 @@ export function InventoryModal({
           </div>
         )}
 
-        <div className="text-xs text-muted-foreground">
-          Reputation {reputation} • Cash ${cash.toLocaleString()}
+        <div className="flex flex-col gap-2 text-xs text-muted-foreground">
+          <div>Reputation {reputation} • Cash ${cash.toLocaleString()}</div>
+          <Button variant="outline" size="sm" onClick={onClose} className="self-end">
+            Close
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

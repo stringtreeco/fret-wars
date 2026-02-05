@@ -25,15 +25,13 @@ export function TerminalFeed({ messages, terminalRef, className }: TerminalFeedP
 
   return (
     <div
+      ref={terminalRef}
       className={cn(
         "fret-scrollbar flex-1 overflow-y-auto bg-background p-4",
         className
       )}
     >
-      <div
-        ref={terminalRef}
-        className="fret-scrollbar flex h-full max-h-[200px] flex-col gap-2 overflow-y-auto lg:max-h-none"
-      >
+      <div className="flex h-full max-h-[200px] flex-col gap-2 lg:max-h-none">
         {messages.map((message) => (
           <div
             key={message.id}
