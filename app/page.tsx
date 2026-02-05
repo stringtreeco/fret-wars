@@ -1749,6 +1749,7 @@ export default function FretWarsGame() {
   const [runLength, setRunLength] = useState(30)
   const terminalRef = useRef<HTMLDivElement>(null)
   const didHydrateRef = useRef(false)
+  const autoScrollRef = useRef(true)
   const isSelectedInspected = selectedItem
     ? gameState.inspectedMarketIds.includes(selectedItem.id)
     : false
@@ -1823,12 +1824,20 @@ export default function FretWarsGame() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState))
   }, [gameState])
 
-  useEffect(() => {
+  const handleTerminalScroll = () => {
     if (!terminalRef.current) return
     const el = terminalRef.current
     const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    if (!didHydrateRef.current || isNearBottom) {
-      el.scrollTop = el.scrollHeight
+    autoScrollRef.current = isNearBottom
+  }
+
+  useEffect(() => {
+    if (!terminalRef.current) return
+    const el = terminalRef.current
+    if (!didHydrateRef.current || autoScrollRef.current) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight
+      })
       didHydrateRef.current = true
     }
   }, [gameState.messages])
@@ -3198,7 +3207,11 @@ export default function FretWarsGame() {
       <div className="flex flex-1 flex-col lg:hidden">
         <Header onMenu={handleOpenMenu} />
         <StatusBar gameState={gameState} />
-        <TerminalFeed messages={gameState.messages} terminalRef={terminalRef} />
+        <TerminalFeed
+          messages={gameState.messages}
+          terminalRef={terminalRef}
+          onScroll={handleTerminalScroll}
+        />
         <MarketSection
           items={gameState.market}
           onItemSelect={handleItemSelect}
@@ -3215,7 +3228,12 @@ export default function FretWarsGame() {
           <StatusBar gameState={gameState} className="mt-4" />
         </aside>
         <main className="flex flex-col overflow-hidden">
-          <TerminalFeed messages={gameState.messages} terminalRef={terminalRef} className="flex-1" />
+          <TerminalFeed
+            messages={gameState.messages}
+            terminalRef={terminalRef}
+            className="flex-1"
+            onScroll={handleTerminalScroll}
+          />
           <ActionBar onAction={handleAction} className="border-t border-border" />
         </main>
         <aside className="flex flex-col overflow-y-auto border-l border-border bg-card">
