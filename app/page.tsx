@@ -9,6 +9,9 @@ import { ActionBar } from "@/components/game/action-bar"
 import { DealModal } from "@/components/game/deal-modal"
 import { TravelModal, type Location } from "@/components/game/travel-modal"
 import { InventoryModal } from "@/components/game/inventory-modal"
+import { SellModal } from "@/components/game/sell-modal"
+import { DuelModal } from "@/components/game/duel-modal"
+import { EncounterModal } from "@/components/game/encounter-modal"
 
 export type HeatLevel = "Low" | "Medium" | "High"
 export type Rarity = "common" | "uncommon" | "rare" | "legendary"
@@ -42,6 +45,11 @@ export interface GameState {
   }
   favorTokens: number
   repoShield: boolean
+  pendingDuel: DuelState | null
+  pendingEncounter: EncounterState | null
+  tradeDeclines: number
+  performanceMarket: PerformanceItem[]
+  performanceItems: PerformanceItem[]
   market: MarketItem[]
   messages: TerminalMessage[]
   runSeed: string
@@ -79,6 +87,86 @@ export interface OwnedItem extends MarketItem {
   luthierTargetCondition?: Condition
 }
 
+export interface DuelChallenger {
+  id: string
+  label: string
+  baseSkill: number
+  repWin: number
+  repLoss: number
+  cashMin: number
+  cashMax: number
+  wagerChance: number
+  rareRewardChance: number
+  intro: string[]
+  win: string[]
+  lose: string[]
+  tie: string[]
+  signatureOptions: DuelOption[]
+}
+
+export interface DuelOption {
+  id: string
+  label: string
+  playerBonus: number
+  variance: number
+  repBonusOnWin: number
+}
+
+export interface DuelState {
+  challengerId: string
+  challengerLabel: string
+  intro: string
+  wagerOffered: boolean
+  wagerAmount: number
+  wagerAccepted: boolean
+  wagerLocked: boolean
+  options: DuelOption[]
+  round: number
+  totalRounds: number
+  playerScore: number
+  opponentScore: number
+  lastReaction?: string
+  selectedBoostId?: string
+}
+
+export type EncounterState =
+  | {
+      type: "bulkLot"
+      items: MarketItem[]
+      vagueItems: string[]
+      totalCost: number
+      projectRate: number
+    }
+  | {
+      type: "tradeOffer"
+      requestedItem: OwnedItem
+      offeredItem: MarketItem
+    }
+  | {
+      type: "mysteriousListing"
+      item: MarketItem
+      proofChecked: boolean
+    }
+  | {
+      type: "repairScare"
+      item: OwnedItem
+      fullPrice: number
+      discountPrice: number
+    }
+
+export interface PerformanceItem {
+  id: string
+  name: string
+  description: string
+  cost: number
+  effect: {
+    playerBonus?: number
+    varianceBonus?: number
+    repBonusOnWin?: number
+    opponentPenalty?: number
+  }
+}
+
 export interface TerminalMessage {
   id: string
   text: string
@@ -87,11 +175,52 @@ export interface TerminalMessage {
 
 const STORAGE_KEY = "fretwars:state"
 
-const initialMessages: TerminalMessage[] = [
-  { id: "1", text: "Welcome to Fret Wars. The gear market awaits.", type: "info" },
-  { id: "2", text: "Market volatility increases after influencer buzz.", type: "event" },
-  { id: "3", text: "Pawn shop owner quietly shows you a vintage Fender case.", type: "event" },
-  { id: "4", text: "A local dealer warns: 'Watch out for the '62 parts flooding in.'", type: "warning" },
+const introMessagePool: Array<{
+  id: string
+  text: string
+  type: TerminalMessage["type"]
+  listingTag?: "vintage_fender" | "touring_band" | "pedal_hype" | "pickup_batch" | "studio_dump"
+}> = [
+  {
+    id: "pedal_hype",
+    text: "Market volatility increases after influencer buzz.",
+    type: "event",
+    listingTag: "pedal_hype",
+  },
+  {
+    id: "vintage_fender",
+    text: "Pawn shop owner quietly shows you a vintage Fender case.",
+    type: "event",
+    listingTag: "vintage_fender",
+  },
+  {
+    id: "parts_flood",
+    text: "A local tech warns: 'Watch out for the '62 parts flooding in.'",
+    type: "warning",
+  },
+  {
+    id: "studio_dump",
+    text: "A studio closes and dumps gear at a discount.",
+    type: "event",
+    listingTag: "studio_dump",
+  },
+  {
+    id: "pickup_batch",
+    text: "Collectors are whispering about a rare batch of pickups.",
+    type: "info",
+    listingTag: "pickup_batch",
+  },
+  {
+    id: "touring_band",
+    text: "A touring band just cleared out their storage unit.",
+    type: "event",
+    listingTag: "touring_band",
+  },
+  {
+    id: "festival_weekend",
+    text: "Local listings spike after a festival weekend.",
+    type: "event",
+  },
 ]
 
 const marketCatalog = [
@@ -665,6 +794,176 @@ const marketCatalog = [
     description: "Original PAF humbuckers",
     flavorText: "Seller refuses to ship. Meet only.",
   },
+  {
+    name: "1959 Les Paul Standard",
+    category: "Guitar" as const,
+    basePrice: 120000,
+    rarity: "legendary" as const,
+    scamRisk: 0.5,
+    hotRisk: 0.35,
+    description: "Burst finish, the holy grail",
+    flavorText: "Seller wants to meet with a loupe and a lawyer.",
+  },
+  {
+    name: "1965 Fender Deluxe Reverb",
+    category: "Amp" as const,
+    basePrice: 3200,
+    rarity: "legendary" as const,
+    scamRisk: 0.3,
+    hotRisk: 0.2,
+    description: "Blackface classic, sparkling clean",
+    flavorText: "Original speaker and drip edge trim.",
+  },
+  {
+    name: "Vox AC30 Top Boost",
+    category: "Amp" as const,
+    basePrice: 2400,
+    rarity: "rare" as const,
+    scamRisk: 0.22,
+    hotRisk: 0.16,
+    description: "Chimey British combo",
+    flavorText: "Seller says it sat in a church basement for years.",
+  },
+  {
+    name: "Gibson ES-335",
+    category: "Guitar" as const,
+    basePrice: 3200,
+    rarity: "rare" as const,
+    scamRisk: 0.25,
+    hotRisk: 0.18,
+    description: "Classic semi-hollow, cherry",
+    flavorText: "Plays like butter. Case smells like old smoke.",
+  },
+  {
+    name: "1962 Fender Stratocaster",
+    category: "Guitar" as const,
+    basePrice: 18000,
+    rarity: "legendary" as const,
+    scamRisk: 0.4,
+    hotRisk: 0.3,
+    description: "Pre-CBS Strat, slab board",
+    flavorText: "The neck stamps are crisp. The price is not.",
+  },
+  {
+    name: "1952 Fender Telecaster",
+    category: "Guitar" as const,
+    basePrice: 26000,
+    rarity: "legendary" as const,
+    scamRisk: 0.42,
+    hotRisk: 0.3,
+    description: "Blackguard legend",
+    flavorText: "Butterscotch finish, brass saddles.",
+  },
+  {
+    name: "Gibson SG Standard '61 Reissue",
+    category: "Guitar" as const,
+    basePrice: 1900,
+    rarity: "uncommon" as const,
+    scamRisk: 0.14,
+    hotRisk: 0.1,
+    description: "Slim neck, vibrola",
+    flavorText: "Looks stage-ready. Smells like fresh strings.",
+  },
+  {
+    name: "Fender Precision Bass '57 Reissue",
+    category: "Guitar" as const,
+    basePrice: 1800,
+    rarity: "uncommon" as const,
+    scamRisk: 0.12,
+    hotRisk: 0.08,
+    description: "Maple neck, classic thump",
+    flavorText: "One owner, lots of sessions.",
+  },
+  {
+    name: "Gibson Flying V '67 Reissue",
+    category: "Guitar" as const,
+    basePrice: 2500,
+    rarity: "rare" as const,
+    scamRisk: 0.2,
+    hotRisk: 0.15,
+    description: "Mahogany, sharp lines",
+    flavorText: "Case barely fits. Seller grins.",
+  },
+  {
+    name: "Dunlop Cry Baby GCB95",
+    category: "Pedal" as const,
+    basePrice: 95,
+    rarity: "common" as const,
+    scamRisk: 0.04,
+    hotRisk: 0.02,
+    description: "The classic wah",
+    flavorText: "Heel-down squeak included.",
+  },
+  {
+    name: "Electro-Harmonix Big Muff Pi (Triangle)",
+    category: "Pedal" as const,
+    basePrice: 900,
+    rarity: "rare" as const,
+    scamRisk: 0.28,
+    hotRisk: 0.12,
+    description: "Vintage fuzz, triangle logo",
+    flavorText: "Looks honest. Sounds huge.",
+  },
+  {
+    name: "Boss CE-1 Chorus Ensemble",
+    category: "Pedal" as const,
+    basePrice: 1200,
+    rarity: "legendary" as const,
+    scamRisk: 0.32,
+    hotRisk: 0.18,
+    description: "Original chorus unit",
+    flavorText: "Heavy, loud, and unmistakable.",
+  },
+  {
+    name: "MXR Script Phase 90",
+    category: "Pedal" as const,
+    basePrice: 750,
+    rarity: "rare" as const,
+    scamRisk: 0.22,
+    hotRisk: 0.1,
+    description: "Script logo classic phaser",
+    flavorText: "Orange box, script logo, big vibe.",
+  },
+  {
+    name: "Marshall 1959 Super Lead",
+    category: "Amp" as const,
+    basePrice: 4200,
+    rarity: "legendary" as const,
+    scamRisk: 0.3,
+    hotRisk: 0.22,
+    description: "Plexi-era head",
+    flavorText: "Loud enough to melt paint.",
+  },
+  {
+    name: "Fender '65 Twin Reverb Reissue",
+    category: "Amp" as const,
+    basePrice: 1200,
+    rarity: "uncommon" as const,
+    scamRisk: 0.12,
+    hotRisk: 0.08,
+    description: "Modern classic, huge clean headroom",
+    flavorText: "Looks new, wheels still on.",
+  },
+  {
+    name: "Fender '57 Strat Pickup Set",
+    category: "Parts" as const,
+    basePrice: 300,
+    rarity: "uncommon" as const,
+    scamRisk: 0.16,
+    hotRisk: 0.08,
+    description: "Vintage-voiced single coils",
+    flavorText: "Wax potted and marked by hand.",
+  },
+  {
+    name: "Switchcraft Jack Set",
+    category: "Parts" as const,
+    basePrice: 45,
+    rarity: "common" as const,
+    scamRisk: 0.03,
+    hotRisk: 0.02,
+    description: "Gold standard jacks, pack of 3",
+    flavorText: "Tech drawer staple.",
+  },
 ]
 
 const marketShiftMessages = [
@@ -672,14 +971,14 @@ const marketShiftMessages = [
   "Estate sale glut lowers vintage asking prices.",
   "Pawn shops are flush after a touring weekend.",
   "Collectors are quiet today. Fewer bidding wars.",
-  "Word is a shop just got raided. Sellers are nervous.",
+  "Word is a shop just got audited. Sellers are nervous.",
 ]
 
 const repoMessages = [
-  "Two suits flash badges. Serial checks get tense fast.",
-  "A patrol rolls through and asks about your haul.",
-  "A buyer backs out. Says heat is high after a raid.",
-  "You spot a familiar van circling the block.",
+  "A venue manager runs serial checks. Provenance gets tense.",
+  "A consignment shop pauses intake after a provenance sweep.",
+  "Buyers back out after a listing audit.",
+  "A recovery agent is asking around for missing gear.",
 ]
 
 const locationModifiers = {
@@ -721,6 +1020,223 @@ const TOOL_COSTS = {
   priceGuide: 250,
   insurancePlan: 300,
   luthierBench: 500,
+}
+
+const performanceCatalog: PerformanceItem[] = [
+  {
+    id: "fresh_strings",
+    name: "Fresh Strings",
+    description: "Snappier attack and better intonation for the next jam.",
+    cost: 60,
+    effect: { playerBonus: 6 },
+  },
+  {
+    id: "slide",
+    name: "Slide",
+    description: "Adds expressive range, but it can get wild.",
+    cost: 45,
+    effect: { varianceBonus: 14 },
+  },
+  {
+    id: "aerospace_pick",
+    name: "Aerospace Pick",
+    description: "Fast, precise, and a little flashy. Judges notice.",
+    cost: 90,
+    effect: { repBonusOnWin: 2 },
+  },
+  {
+    id: "custom_strap",
+    name: "Custom Strap",
+    description: "You look the part. The crowd leans your way.",
+    cost: 75,
+    effect: { playerBonus: 4, varianceBonus: 4 },
+  },
+]
+
+const vagueDescriptors = [
+  "Vintage-looking guitar",
+  "Scuffed combo amp",
+  "Mystery overdrive pedal",
+  "Dusty hard case",
+  "Old parts box",
+  "Road-worn pedalboard",
+]
+
+const duelChallengers: DuelChallenger[] = [
+  {
+    id: "busker",
+    label: "Busker with a Well-Worn Martin",
+    baseSkill: 35,
+    repWin: 2,
+    repLoss: 1,
+    cashMin: 80,
+    cashMax: 160,
+    wagerChance: 0.25,
+    rareRewardChance: 0.08,
+    intro: [
+      "A busker tips his cap. 'Care to trade a tune?' The sidewalk turns into a stage.",
+      "You catch a street player in a deep groove. He grins and taps the case.",
+    ],
+    win: [
+      "You own the sidewalk jam. The hat fills fast and a collector asks for your card.",
+      "Your groove locks in. The busker laughs and hands you the hat with a wink.",
+    ],
+    lose: [
+      "You miss a change. The busker steals the corner and the crowd stays with him.",
+      "The street player’s rhythm is relentless. You get played off with a smile.",
+    ],
+    tie: [
+      "It’s a friendly draw. The crowd claps for both of you.",
+      "No clear winner. You trade nods and keep it moving.",
+    ],
+    signatureOptions: [
+      { id: "busker_waltz", label: "Travis-Pick Flourish", playerBonus: 6, variance: 22, repBonusOnWin: 2 },
+    ],
+  },
+  {
+    id: "teen_punk",
+    label: "Teenage Punk with a Squier",
+    baseSkill: 45,
+    repWin: 3,
+    repLoss: 2,
+    cashMin: 90,
+    cashMax: 190,
+    wagerChance: 0.35,
+    rareRewardChance: 0.1,
+    intro: [
+      "A teenage punk stomps a combo on. 'Show me what you’ve got.'",
+      "A wall of distortion hits. The kid grins and dares you to match it.",
+    ],
+    win: [
+      "You outplay the punk and keep it tasteful. The crowd whoops.",
+      "Your lead cuts through the noise. The kid laughs and tosses you a pick.",
+    ],
+    lose: [
+      "The punk’s energy wins the crowd. You get drowned out.",
+      "It’s loud, fast, and messy. The pit votes against you.",
+    ],
+    tie: [
+      "Equal chaos. The crowd can’t pick a winner.",
+      "It’s all noise and smiles. Call it a draw.",
+    ],
+    signatureOptions: [
+      { id: "punk_speed", label: "Power-Chord Frenzy", playerBonus: 10, variance: 40, repBonusOnWin: 0 },
+    ],
+  },
+  {
+    id: "frontman",
+    label: "Local Frontman",
+    baseSkill: 55,
+    repWin: 4,
+    repLoss: 3,
+    cashMin: 120,
+    cashMax: 240,
+    wagerChance: 0.45,
+    rareRewardChance: 0.14,
+    intro: [
+      "A local frontman steps offstage and points your way. The room goes quiet.",
+      "The venue clears a space. The frontman wants a quick showdown.",
+    ],
+    win: [
+      "You take the room. The crowd chants and you get fresh leads.",
+      "Your run is clean and confident. The frontman nods, impressed.",
+    ],
+    lose: [
+      "The frontman steals the spotlight. You lose the room.",
+      "They’ve done this a hundred times. You slip and they soar.",
+    ],
+    tie: [
+      "The crowd splits. No clear winner tonight.",
+      "Two strong sets, no verdict.",
+    ],
+    signatureOptions: [
+      { id: "frontman_hook", label: "Stadium Howl", playerBonus: 8, variance: 30, repBonusOnWin: 2 },
+    ],
+  },
+  {
+    id: "session_ace",
+    label: "Session Ace",
+    baseSkill: 65,
+    repWin: 5,
+    repLoss: 4,
+    cashMin: 140,
+    cashMax: 280,
+    wagerChance: 0.5,
+    rareRewardChance: 0.2,
+    intro: [
+      "A session ace spots your case and smirks. 'One take?'",
+      "A studio guitarist offers a clean showdown. High stakes, clean tone.",
+    ],
+    win: [
+      "You outplay a pro. The room goes quiet, then erupts.",
+      "Your tone is immaculate. The ace tips their cap.",
+    ],
+    lose: [
+      "The ace’s timing is perfect. You can’t match it.",
+      "You play well, but the pro is surgical.",
+    ],
+    tie: [
+      "Two pros, one room. The crowd just listens.",
+      "Nobody blinks. It’s a draw.",
+    ],
+    signatureOptions: [
+      { id: "ace_take", label: "Chicken Pickin' Fury", playerBonus: 14, variance: 28, repBonusOnWin: 1 },
+    ],
+  },
+  {
+    id: "festival",
+    label: "Festival Headliner",
+    baseSkill: 50,
+    repWin: 3,
+    repLoss: 3,
+    cashMin: 100,
+    cashMax: 220,
+    wagerChance: 0.4,
+    rareRewardChance: 0.12,
+    intro: [
+      "A festival headliner is killing time backstage. 'Jam?'",
+      "You catch a soundcheck. The headliner wants a quick duel.",
+    ],
+    win: [
+      "You light up the green room. People ask for your card.",
+      "You win the jam. A tech whispers about a rare listing.",
+    ],
+    lose: [
+      "The headliner’s set is tight. You lose by a hair.",
+      "You play well, but they’ve got the crowd.",
+    ],
+    tie: [
+      "Friendly tie. Everyone laughs and moves on.",
+      "No winner, just good music.",
+    ],
+    signatureOptions: [
+      { id: "festival_chorus", label: "Smoking Solo", playerBonus: 9, variance: 33, repBonusOnWin: 1 },
+    ],
+  },
+]
+
+const duelOptions: DuelOption[] = [
+  { id: "shred", label: "Shred Hard", playerBonus: 12, variance: 45, repBonusOnWin: 0 },
+  { id: "pentatonic", label: "Play Pentatonic", playerBonus: 6, variance: 25, repBonusOnWin: 1 },
+  { id: "pocket", label: "Tasteful Pocket", playerBonus: 4, variance: 20, repBonusOnWin: 2 },
+  { id: "crowd", label: "Crowd Pleaser", playerBonus: 8, variance: 35, repBonusOnWin: 1 },
+]
+
+const getDuelRounds = (challengerId: string) => {
+  switch (challengerId) {
+    case "busker":
+      return 1
+    case "teen_punk":
+      return 2
+    case "festival":
+      return 3
+    case "frontman":
+      return 3
+    case "session_ace":
+      return 4
+    default:
+      return 2
+  }
 }
 
 const hashSeed = (input: string) => {
@@ -814,6 +1330,18 @@ const generateMarket = (day: number, location: string, runSeed: string) => {
   return results
 }
 
+const generatePerformanceMarket = (day: number, location: string, runSeed: string) => {
+  const rng = mulberry32(hashSeed(`${runSeed}-perf-${day}-${location}`))
+  const count = rng() > 0.55 ? 2 : 1
+  const pool = [...performanceCatalog]
+  const picks: PerformanceItem[] = []
+  for (let i = 0; i < count; i += 1) {
+    const index = Math.floor(rng() * pool.length)
+    picks.push(pool.splice(index, 1)[0])
+  }
+  return picks
+}
+
 const getMarketShiftMessage = (day: number, location: string, runSeed: string) => {
   const rng = mulberry32(hashSeed(`${runSeed}-shift-${day}-${location}`))
   return marketShiftMessages[Math.floor(rng() * marketShiftMessages.length)]
@@ -889,6 +1417,200 @@ const getLuthierCost = (item: OwnedItem, target: Condition) => {
 
 const getLuthierDays = (target: Condition) => (target === "Player" ? 1 : 2)
 
+const randomFrom = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)]
+
+const buildVagueItems = (count: number) => {
+  const pool = [...vagueDescriptors]
+  const picks: string[] = []
+  for (let i = 0; i < count; i += 1) {
+    if (pool.length === 0) break
+    picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0])
+  }
+  return picks
+}
+
+const pickBulkLotItems = (runSeed: string, day: number, location: string) => {
+  const rng = mulberry32(hashSeed(`${runSeed}-bulk-${day}-${location}`))
+  const count = 3 + Math.floor(rng() * 4)
+  const pool = [...marketCatalog]
+  const picks: MarketItem[] = []
+  for (let i = 0; i < count; i += 1) {
+    const index = Math.floor(rng() * pool.length)
+    const base = pool.splice(index, 1)[0]
+    const condition = rng() < 0.5 ? "Project" : "Player"
+    const priceToday = Math.round(base.basePrice * 0.6)
+    const slots = base.category === "Amp" ? 3 : base.category === "Guitar" ? 2 : 1
+    picks.push({
+      id: buildMarketId(`${base.name}-bulk`, day, location, i),
+      name: base.name,
+      category: base.category,
+      basePrice: base.basePrice,
+      priceToday,
+      trend: "down",
+      rarity: base.rarity,
+      condition,
+      slots,
+      scamRisk: base.scamRisk,
+      hotRisk: base.hotRisk,
+      description: base.description,
+      flavorText: `Bulk lot find: ${base.flavorText}`,
+    })
+  }
+  return picks
+}
+
+const buildMysteriousListing = (runSeed: string, day: number, location: string) => {
+  const rng = mulberry32(hashSeed(`${runSeed}-mystery-${day}-${location}`))
+  const rarePool = marketCatalog.filter((item) => item.rarity === "rare" || item.rarity === "legendary")
+  const base = randomFrom(rarePool.length ? rarePool : marketCatalog)
+  const condition = "Player" as Condition
+  const priceToday = Math.round(base.basePrice * 0.55)
+  const slots = base.category === "Amp" ? 3 : base.category === "Guitar" ? 2 : 1
+  return {
+    id: buildMarketId(`${base.name}-mystery`, day, location, Math.floor(rng() * 1000)),
+    name: base.name,
+    category: base.category,
+    basePrice: base.basePrice,
+    priceToday,
+    trend: "down" as const,
+    rarity: base.rarity,
+    condition,
+    slots,
+    scamRisk: clamp(base.scamRisk + 0.25, 0.2, 0.9),
+    hotRisk: base.hotRisk,
+    description: `Too-good-to-be-true listing: ${base.description}`,
+    flavorText: "The photos look legit, but the price is unreal.",
+  } satisfies MarketItem
+}
+
+const buildSpecialListingFromPool = (
+  pool: typeof marketCatalog,
+  day: number,
+  location: string,
+  runSeed: string,
+  tag: string
+) => {
+  if (pool.length === 0) return null
+  const rng = mulberry32(hashSeed(`${runSeed}-intro-${tag}-${day}-${location}`))
+  const baseItem = pool[Math.floor(rng() * pool.length)]
+  const condition = "Mint" as Condition
+  const priceToday = Math.round(baseItem.basePrice * 0.78)
+  const slots = baseItem.category === "Amp" ? 3 : baseItem.category === "Guitar" ? 2 : 1
+  return {
+    id: buildMarketId(`${baseItem.name}-intro`, day, location, Math.floor(rng() * 1000)),
+    name: baseItem.name,
+    category: baseItem.category,
+    basePrice: baseItem.basePrice,
+    priceToday,
+    trend: "down" as const,
+    rarity: baseItem.rarity,
+    condition,
+    slots,
+    scamRisk: Math.max(0.04, baseItem.scamRisk - 0.1),
+    hotRisk: baseItem.hotRisk,
+    description: baseItem.description,
+    flavorText: `Special lead: ${baseItem.flavorText}`,
+  } satisfies MarketItem
+}
+
+const pickIntroBundle = (runSeed: string, day: number, location: string) => {
+  const rng = mulberry32(hashSeed(`${runSeed}-intro`))
+  const pool = [...introMessagePool]
+  const shuffled: typeof introMessagePool = []
+  while (pool.length) {
+    const index = Math.floor(rng() * pool.length)
+    shuffled.push(pool.splice(index, 1)[0])
+  }
+  const intro = shuffled.slice(0, 3)
+  const messages: TerminalMessage[] = [
+    { id: `${runSeed}-intro-0`, text: "Welcome to Fret Wars. The gear market awaits.", type: "info" },
+    ...intro.map((message, index) => ({
+      id: `${runSeed}-intro-${index + 1}`,
+      text: message.text,
+      type: message.type,
+    })),
+  ]
+
+  const specialListings: MarketItem[] = []
+  intro.forEach((message) => {
+    if (!message.listingTag) return
+    let pool: typeof marketCatalog = []
+    switch (message.listingTag) {
+      case "vintage_fender":
+        pool = marketCatalog.filter(
+          (item) =>
+            item.category === "Guitar" &&
+            (item.name.includes("Fender") ||
+              item.name.includes("Strat") ||
+              item.name.includes("Jazzmaster") ||
+              item.name.includes("Tele"))
+        )
+        break
+      case "touring_band":
+        pool = marketCatalog.filter((item) => item.category === "Amp" || item.category === "Parts")
+        break
+      case "pedal_hype":
+        pool = marketCatalog.filter((item) => item.category === "Pedal" && item.rarity !== "common")
+        break
+      case "pickup_batch":
+        pool = marketCatalog.filter((item) => item.category === "Parts" && item.name.includes("Pickup"))
+        break
+      case "studio_dump":
+        pool = marketCatalog.filter((item) => item.category === "Amp" || item.category === "Pedal")
+        break
+    }
+    const listing = buildSpecialListingFromPool(pool, day, location, runSeed, message.listingTag)
+    if (listing) specialListings.push(listing)
+  })
+
+  return { messages, specialListings }
+}
+
+const buildSpecialListing = (day: number, location: string) => {
+  const rarePool = marketCatalog.filter((item) => item.rarity === "rare" || item.rarity === "legendary")
+  const baseItem = randomFrom(rarePool.length ? rarePool : marketCatalog)
+  const condition = "Mint" as Condition
+  const priceToday = Math.round(baseItem.basePrice * 0.72)
+  const slots = baseItem.category === "Amp" ? 3 : baseItem.category === "Guitar" ? 2 : 1
+  return {
+    id: buildMarketId(`${baseItem.name}-special`, day, location, Math.floor(Math.random() * 1000)),
+    name: baseItem.name,
+    category: baseItem.category,
+    basePrice: baseItem.basePrice,
+    priceToday,
+    trend: "down" as const,
+    rarity: baseItem.rarity,
+    condition,
+    slots,
+    scamRisk: Math.max(0.05, baseItem.scamRisk - 0.1),
+    hotRisk: baseItem.hotRisk,
+    description: baseItem.description,
+    flavorText: `Special listing: ${baseItem.flavorText}`,
+  } satisfies MarketItem
+}
+
+const buildWonItem = (day: number) => {
+  const winPool = marketCatalog.filter((item) => item.rarity !== "legendary")
+  const baseItem = randomFrom(winPool.length ? winPool : marketCatalog)
+  const condition = "Player" as Condition
+  const slots = baseItem.category === "Amp" ? 3 : baseItem.category === "Guitar" ? 2 : 1
+  return {
+    id: buildMarketId(`${baseItem.name}-won`, day, "duel", Math.floor(Math.random() * 1000)),
+    name: baseItem.name,
+    category: baseItem.category,
+    basePrice: baseItem.basePrice,
+    priceToday: baseItem.basePrice,
+    trend: "stable" as const,
+    rarity: baseItem.rarity,
+    condition,
+    slots,
+    scamRisk: baseItem.scamRisk,
+    hotRisk: Math.max(0.05, baseItem.hotRisk - 0.05),
+    description: baseItem.description,
+    flavorText: `Won in a jam: ${baseItem.flavorText}`,
+  } satisfies MarketItem
+}
+
 const calculateScore = (cash: number, inventory: OwnedItem[], market: MarketItem[], reputation: number) => {
   const inventoryValue = inventory.reduce(
     (sum, item) => sum + getSellPrice(item, market, reputation),
@@ -906,10 +1628,12 @@ const createMessage = (
   type,
 })
 
-const createInitialGameState = (runSeed: string): GameState => {
+const createInitialGameState = (runSeed: string, totalDays = 30): GameState => {
+  const intro = pickIntroBundle(runSeed, 1, "Downtown Music Row")
+  const baseMarket = generateMarket(1, "Downtown Music Row", runSeed)
   return {
     day: 1,
-    totalDays: 30,
+    totalDays,
     location: "Downtown Music Row",
     cash: 2500,
     inventoryCapacity: 10,
@@ -929,8 +1653,13 @@ const createInitialGameState = (runSeed: string): GameState => {
     },
     favorTokens: 0,
     repoShield: false,
-    market: generateMarket(1, "Downtown Music Row", runSeed),
-    messages: initialMessages,
+    pendingDuel: null,
+    pendingEncounter: null,
+    tradeDeclines: 0,
+    performanceMarket: generatePerformanceMarket(1, "Downtown Music Row", runSeed),
+    performanceItems: [],
+    market: [...baseMarket, ...intro.specialListings],
+    messages: intro.messages,
     runSeed,
   }
 }
@@ -942,10 +1671,12 @@ export default function FretWarsGame() {
   const [insuranceSelected, setInsuranceSelected] = useState(false)
   const [isTravelModalOpen, setIsTravelModalOpen] = useState(false)
   const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false)
+  const [isSellModalOpen, setIsSellModalOpen] = useState(false)
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle")
   const [showStartMenu, setShowStartMenu] = useState(true)
   const [hasSavedGame, setHasSavedGame] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [runLength, setRunLength] = useState(30)
   const terminalRef = useRef<HTMLDivElement>(null)
   const isSelectedInspected = selectedItem
     ? gameState.inspectedMarketIds.includes(selectedItem.id)
@@ -967,6 +1698,7 @@ export default function FretWarsGame() {
         const parsed = JSON.parse(savedState) as Partial<GameState>
         const fallback = createInitialGameState("seed")
         const merged = { ...fallback, ...parsed }
+        setRunLength(typeof merged.totalDays === "number" ? merged.totalDays : 30)
         const normalizedInventory = (parsed.inventory ?? fallback.inventory).map((item) => ({
           ...item,
           condition: item.condition ?? "Player",
@@ -988,6 +1720,10 @@ export default function FretWarsGame() {
             marketHasDetails && parsed.market
               ? parsed.market
               : generateMarket(merged.day, merged.location, merged.runSeed),
+          performanceMarket:
+            parsed.performanceMarket ??
+            generatePerformanceMarket(merged.day, merged.location, merged.runSeed),
+          performanceItems: parsed.performanceItems ?? fallback.performanceItems,
           messages: parsed.messages ?? fallback.messages,
           inspectedMarketIds: parsed.inspectedMarketIds ?? fallback.inspectedMarketIds,
           recentFlipDays: parsed.recentFlipDays ?? fallback.recentFlipDays,
@@ -997,6 +1733,9 @@ export default function FretWarsGame() {
           tools: parsed.tools ?? fallback.tools,
           favorTokens: parsed.favorTokens ?? fallback.favorTokens,
           repoShield: parsed.repoShield ?? fallback.repoShield,
+          pendingDuel: parsed.pendingDuel ?? fallback.pendingDuel,
+          pendingEncounter: parsed.pendingEncounter ?? fallback.pendingEncounter,
+          tradeDeclines: parsed.tradeDeclines ?? fallback.tradeDeclines,
         })
       } catch {
         setGameState(createInitialGameState("seed"))
@@ -1004,7 +1743,7 @@ export default function FretWarsGame() {
     } else {
       const newSeed =
         typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Date.now().toString()
-      setGameState(createInitialGameState(newSeed))
+      setGameState(createInitialGameState(newSeed, runLength))
       setHasSavedGame(false)
     }
   }, [])
@@ -1025,19 +1764,10 @@ export default function FretWarsGame() {
         setIsTravelModalOpen(true)
         break
       case "gigbag":
-        if (gameState.inventory.length === 0) {
-          addMessage("Your gig bag is empty. Hit the market and pick something up.", "info")
-        } else {
-          const slotsUsed = computeSlotsUsed(gameState.inventory)
-          addMessage(
-            `Gig Bag: ${slotsUsed}/${gameState.inventoryCapacity} slots used.`,
-            "info"
-          )
-          addMessage("Open the market and tap items to buy or sell.", "info")
-        }
+        setIsInventoryModalOpen(true)
         break
       case "sell":
-        setIsInventoryModalOpen(true)
+        setIsSellModalOpen(true)
         break
       case "endday":
         setGameState((prev) =>
@@ -1093,8 +1823,8 @@ export default function FretWarsGame() {
             ...prev.messages,
             createMessage(
               insuranceSelected
-                ? `Scammed on the ${selectedItem.name}. Insurance reimburses $${refund}.`
-                : `Scammed on the ${selectedItem.name}. The seller ghosts you and your cash vanishes.`,
+                ? `Listing vanishes on the ${selectedItem.name}. Insurance reimburses $${refund}.`
+                : `Listing vanishes on the ${selectedItem.name}. Your cash is gone.`,
               "warning"
             ),
           ],
@@ -1132,7 +1862,7 @@ export default function FretWarsGame() {
       setIsModalOpen(false)
       setSelectedItem(null)
     } else {
-      addMessage("Not enough cash for this deal.", "warning")
+      addMessage("Not enough cash for this listing.", "warning")
     }
   }
 
@@ -1155,7 +1885,7 @@ export default function FretWarsGame() {
           market: prev.market.filter((item) => item.id !== selectedItem.id),
           messages: [
             ...prev.messages,
-            createMessage("You ask for proof. The seller ghosts and pulls the listing.", "warning"),
+            createMessage("You ask for proof. The seller goes dark and pulls the listing.", "warning"),
           ],
         }
       }
@@ -1179,7 +1909,7 @@ export default function FretWarsGame() {
   }
 
   const handleWalkAway = () => {
-    addMessage("You walk away from the deal.", "info")
+    addMessage("You pass on the listing.", "info")
     setIsModalOpen(false)
     setSelectedItem(null)
   }
@@ -1198,6 +1928,7 @@ export default function FretWarsGame() {
     }
     const nextDay = prev.day + 1
     const nextMarket = generateMarket(nextDay, nextLocation, prev.runSeed)
+    const nextPerformanceMarket = generatePerformanceMarket(nextDay, nextLocation, prev.runSeed)
     const shiftMessage = getMarketShiftMessage(nextDay, nextLocation, prev.runSeed)
     const recapMessage = getMarketRecap(nextMarket)
     const cleanedFlipDays = prev.recentFlipDays.filter((day) => nextDay - day <= 5)
@@ -1216,6 +1947,8 @@ export default function FretWarsGame() {
     const authMessages: TerminalMessage[] = []
     const luthierMessages: TerminalMessage[] = []
     const jamMessages: TerminalMessage[] = []
+    let pendingDuel: DuelState | null = null
+    let pendingEncounter: EncounterState | null = null
 
     nextInventory = nextInventory.map((item) => {
       if (item.luthierStatus !== "pending" || !item.luthierReadyDay || item.luthierReadyDay > nextDay) {
@@ -1314,20 +2047,72 @@ export default function FretWarsGame() {
 
     const jamChance = 0.18
     if (Math.random() < jamChance) {
-      const heatPenalty = prev.heatLevel === "High" ? 0.1 : prev.heatLevel === "Medium" ? 0.05 : 0
-      const winChance = clamp(0.45 + prev.reputation * 0.003 - heatPenalty, 0.1, 0.85)
-      if (Math.random() < winChance) {
-        const tip = 120 + Math.floor(Math.random() * 180)
-        nextCash += tip
-        nextReputation = clamp(nextReputation + 2, 0, 100)
-        jamMessages.push(
-          createMessage("You win a sidewalk jam duel. A crowd tips you and a lead opens up.", "success"),
-          createMessage(`You pick up $${tip} in tips.`, "success")
+      const challenger = randomFrom(duelChallengers)
+      const options = [...duelOptions]
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 3)
+      const wagerOffered = Math.random() < challenger.wagerChance
+      const wagerAmount = 80 + Math.floor(Math.random() * 140)
+      const totalRounds = getDuelRounds(challenger.id)
+      pendingDuel = {
+        challengerId: challenger.id,
+        challengerLabel: challenger.label,
+        intro: randomFrom(challenger.intro),
+        wagerOffered,
+        wagerAmount,
+        wagerAccepted: false,
+        wagerLocked: false,
+        options,
+        round: 1,
+        totalRounds,
+        playerScore: 0,
+        opponentScore: 0,
+        selectedBoostId: undefined,
+      }
+      jamMessages.push(
+        createMessage(
+          `${challenger.label} challenges you to a quick jam. Pick your approach.`,
+          "event"
         )
-      } else {
-        nextReputation = clamp(nextReputation - 2, 0, 100)
+      )
+    }
+
+    if (!pendingDuel && Math.random() < 0.22) {
+      const encounterRoll = Math.random()
+      if (encounterRoll < 0.32) {
+        const items = pickBulkLotItems(prev.runSeed, nextDay, nextLocation)
+        const slots = items.reduce((sum, item) => sum + item.slots, 0)
+        const totalCost = Math.round(items.reduce((sum, item) => sum + item.priceToday, 0) * 0.75)
+        pendingEncounter = {
+          type: "bulkLot",
+          items,
+          vagueItems: buildVagueItems(items.length),
+          totalCost,
+          projectRate: 0.2 + Math.random() * 0.4,
+        }
         jamMessages.push(
-          createMessage("You lose a quick jam duel. The crowd shrugs and moves on.", "warning")
+          createMessage("Lead on a storage unit full of gear. Bulk lot available.", "event")
+        )
+      } else if (encounterRoll < 0.6 && nextInventory.length > 0) {
+        const requestedItem = randomFrom(nextInventory)
+        const offered = buildSpecialListing(prev.day, prev.location)
+        pendingEncounter = {
+          type: "tradeOffer",
+          requestedItem,
+          offeredItem: offered,
+        }
+        jamMessages.push(
+          createMessage("A trader offers a swap if you're interested.", "event")
+        )
+      } else if (encounterRoll < 0.8) {
+        const item = buildMysteriousListing(prev.runSeed, nextDay, nextLocation)
+        pendingEncounter = {
+          type: "mysteriousListing",
+          item,
+          proofChecked: false,
+        }
+        jamMessages.push(
+          createMessage("A too-good-to-be-true listing just hit your feed.", "warning")
         )
       }
     }
@@ -1337,6 +2122,7 @@ export default function FretWarsGame() {
       day: nextDay,
       location: nextLocation,
       market: nextMarket,
+      performanceMarket: nextPerformanceMarket,
       cash: nextCash,
       reputation: nextReputation,
       inventory: nextInventory,
@@ -1344,6 +2130,8 @@ export default function FretWarsGame() {
       inspectedMarketIds: [],
       recentFlipDays: cleanedFlipDays,
       repoShield: false,
+      pendingDuel,
+      pendingEncounter,
       messages: [
         ...prev.messages,
         ...extraMessages,
@@ -1410,12 +2198,213 @@ export default function FretWarsGame() {
   const handleNewRun = () => {
     const newSeed =
       typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Date.now().toString()
-    const fresh = createInitialGameState(newSeed)
+    const fresh = createInitialGameState(newSeed, runLength)
     setGameState(fresh)
     setShareStatus("idle")
     localStorage.removeItem(STORAGE_KEY)
     setHasSavedGame(false)
     setShowStartMenu(false)
+  }
+
+  const handleOpenMenu = () => {
+    setShowStartMenu(true)
+  }
+
+  const resolveDuel = (option: DuelOption, wagerAccepted: boolean) => {
+    setGameState((prev) => {
+      if (!prev.pendingDuel) return prev
+      const challenger = duelChallengers.find((item) => item.id === prev.pendingDuel?.challengerId)
+      if (!challenger) return { ...prev, pendingDuel: null }
+
+      const selectedBoost = prev.pendingDuel.selectedBoostId
+        ? prev.performanceItems.find((item) => item.id === prev.pendingDuel?.selectedBoostId)
+        : undefined
+      const boostBonus = selectedBoost?.effect.playerBonus ?? 0
+      const boostVariance = selectedBoost?.effect.varianceBonus ?? 0
+      const boostRepBonus = selectedBoost?.effect.repBonusOnWin ?? 0
+      const opponentPenalty = selectedBoost?.effect.opponentPenalty ?? 0
+
+      const hasGuitar = prev.inventory.some((item) => item.category === "Guitar")
+      const hasAmp = prev.inventory.some((item) => item.category === "Amp")
+      const gearBonus = (hasGuitar ? 6 : 0) + (hasAmp ? 4 : 0)
+      const heatPenalty = prev.heatLevel === "High" ? 10 : prev.heatLevel === "Medium" ? 5 : 0
+
+      const playerScore =
+        prev.reputation * 0.4 +
+        option.playerBonus +
+        boostBonus +
+        Math.random() * (option.variance + boostVariance) +
+        gearBonus -
+        heatPenalty
+      const opponentScore = challenger.baseSkill + Math.random() * 35 - opponentPenalty
+      const nextPlayerScore = prev.pendingDuel.playerScore + playerScore
+      const nextOpponentScore = prev.pendingDuel.opponentScore + opponentScore
+      const roundDiff = playerScore - opponentScore
+      const reaction =
+        roundDiff > 8
+          ? "The crowd leans your way."
+          : roundDiff < -8
+            ? "The crowd drifts to your opponent."
+            : "The crowd is split down the middle."
+
+      const nextPerformanceItems = selectedBoost
+        ? prev.performanceItems.filter((item) => item.id !== selectedBoost.id)
+        : prev.performanceItems
+
+      if (prev.pendingDuel.round < prev.pendingDuel.totalRounds) {
+        const signaturePick =
+          prev.pendingDuel.round >= 2 ? randomFrom(challenger.signatureOptions) : null
+        const baseOptions = [...duelOptions].sort(() => Math.random() - 0.5).slice(0, 3)
+        const roundOptions = signaturePick
+          ? [signaturePick, ...baseOptions.filter((opt) => opt.id !== signaturePick.id).slice(0, 2)]
+          : baseOptions
+        return {
+          ...prev,
+          performanceItems: nextPerformanceItems,
+          pendingDuel: {
+            ...prev.pendingDuel,
+            round: prev.pendingDuel.round + 1,
+            playerScore: nextPlayerScore,
+            opponentScore: nextOpponentScore,
+            lastReaction: reaction,
+            wagerAccepted,
+            wagerLocked: true,
+            selectedBoostId: undefined,
+            options: roundOptions,
+          },
+        }
+      }
+
+      let outcome: "win" | "lose" | "tie" = "tie"
+      if (nextPlayerScore >= nextOpponentScore + 8) outcome = "win"
+      if (nextPlayerScore <= nextOpponentScore - 8) outcome = "lose"
+
+      const cashReward =
+        challenger.cashMin +
+        Math.floor(Math.random() * (challenger.cashMax - challenger.cashMin + 1))
+      const wager = wagerAccepted ? prev.pendingDuel.wagerAmount : 0
+
+      let nextCash = prev.cash
+      let nextRep = prev.reputation
+      let nextMarket = prev.market
+      let nextInventory = prev.inventory
+      const duelMessages: TerminalMessage[] = []
+
+      if (outcome === "win") {
+        nextCash += cashReward + wager
+        nextRep = clamp(nextRep + challenger.repWin + option.repBonusOnWin + boostRepBonus, 0, 100)
+        duelMessages.push(
+          createMessage(randomFrom(challenger.win), "success"),
+          createMessage(`You collect $${cashReward}${wager ? ` + $${wager} wager` : ""}.`, "success")
+        )
+        if (Math.random() < challenger.rareRewardChance) {
+          if (Math.random() < 0.5) {
+            const special = buildSpecialListing(prev.day, prev.location)
+            nextMarket = [...nextMarket, special]
+            duelMessages.push(
+              createMessage(
+                `Rare reward: a special listing appears for ${special.name}.`,
+                "event"
+              )
+            )
+          } else {
+            const wonItem = buildWonItem(prev.day)
+            const slotsUsed = computeSlotsUsed(nextInventory)
+            if (slotsUsed + wonItem.slots <= prev.inventoryCapacity) {
+              const ownedWon: OwnedItem = {
+                ...wonItem,
+                purchasePrice: 0,
+                heatValue: Math.round(wonItem.hotRisk * 100),
+                acquiredDay: prev.day,
+                inspected: false,
+                authStatus: "none",
+                authMultiplier: 1,
+                insured: false,
+                insurancePaid: 0,
+                luthierStatus: "none",
+              }
+              nextInventory = [...nextInventory, ownedWon]
+              duelMessages.push(
+                createMessage(
+                  `Rare reward: you win ${wonItem.name} on the spot.`,
+                  "event"
+                )
+              )
+            } else {
+              nextCash += 150
+              duelMessages.push(
+                createMessage(
+                  "Rare reward offered, but your gig bag is full. You take $150 instead.",
+                  "event"
+                )
+              )
+            }
+          }
+        }
+      } else if (outcome === "lose") {
+        nextRep = clamp(nextRep - challenger.repLoss, 0, 100)
+        nextCash = Math.max(0, nextCash - wager)
+        duelMessages.push(createMessage(randomFrom(challenger.lose), "warning"))
+        if (wager) {
+          duelMessages.push(createMessage(`You lose the $${wager} wager.`, "warning"))
+        }
+      } else {
+        duelMessages.push(createMessage(randomFrom(challenger.tie), "info"))
+      }
+
+      return {
+        ...prev,
+        cash: nextCash,
+        reputation: nextRep,
+        inventory: nextInventory,
+        heatLevel: computeHeatLevel(nextInventory),
+        market: nextMarket,
+        performanceItems: nextPerformanceItems,
+        pendingDuel: null,
+        messages: [...prev.messages, ...duelMessages],
+      }
+    })
+  }
+
+  const handleDuelDecline = () => {
+    setGameState((prev) => {
+      if (!prev.pendingDuel) return prev
+      return {
+        ...prev,
+        reputation: clamp(prev.reputation - 1, 0, 100),
+        pendingDuel: null,
+        messages: [
+          ...prev.messages,
+          createMessage("You decline the jam. The crowd shrugs.", "info"),
+        ],
+      }
+    })
+  }
+
+  const handleToggleWager = () => {
+    setGameState((prev) => {
+      if (!prev.pendingDuel) return prev
+      return {
+        ...prev,
+        pendingDuel: {
+          ...prev.pendingDuel,
+          wagerAccepted: !prev.pendingDuel.wagerAccepted,
+        },
+      }
+    })
+  }
+
+  const handleSelectBoost = (id: string) => {
+    setGameState((prev) => {
+      if (!prev.pendingDuel) return prev
+      return {
+        ...prev,
+        pendingDuel: {
+          ...prev.pendingDuel,
+          selectedBoostId: prev.pendingDuel.selectedBoostId === id ? undefined : id,
+        },
+      }
+    })
   }
 
   const handleContinue = () => {
@@ -1639,6 +2628,263 @@ export default function FretWarsGame() {
     })
   }
 
+  const handleBuyPerformanceItem = (item: PerformanceItem) => {
+    setGameState((prev) => {
+      if (prev.cash < item.cost) {
+        return {
+          ...prev,
+          messages: [...prev.messages, createMessage("Not enough cash for that performance item.", "warning")],
+        }
+      }
+      return {
+        ...prev,
+        cash: prev.cash - item.cost,
+        performanceItems: [...prev.performanceItems, item],
+        performanceMarket: prev.performanceMarket.filter((offer) => offer.id !== item.id),
+        messages: [
+          ...prev.messages,
+          createMessage(`Picked up ${item.name} for the next jam.`, "success"),
+        ],
+      }
+    })
+  }
+
+  const handleEncounterDecline = () => {
+    setGameState((prev) => ({
+      ...prev,
+      tradeDeclines: prev.tradeDeclines + 1,
+      pendingEncounter: null,
+      messages: [...prev.messages, createMessage("You pass on the lead.", "info")],
+    }))
+  }
+
+  const handleBulkLotPurchase = () => {
+    setGameState((prev) => {
+      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "bulkLot") return prev
+      const { items, totalCost, projectRate } = prev.pendingEncounter
+      const slotsUsed = computeSlotsUsed(prev.inventory)
+      const newSlots = items.reduce((sum, item) => sum + item.slots, 0)
+      if (slotsUsed + newSlots > prev.inventoryCapacity) {
+        return {
+          ...prev,
+          pendingEncounter: null,
+          messages: [
+            ...prev.messages,
+            createMessage("You can't carry it all. The bulk lot moves on.", "warning"),
+          ],
+        }
+      }
+      if (prev.cash < totalCost) {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage("Not enough cash to grab the bulk lot.", "warning"),
+          ],
+        }
+      }
+      const upgradedItems: OwnedItem[] = items.map((item) => ({
+        ...item,
+        purchasePrice: Math.round(item.priceToday * 0.75),
+        heatValue: Math.round(item.hotRisk * 100),
+        acquiredDay: prev.day,
+        inspected: false,
+        authStatus: "none",
+        authMultiplier: 1,
+        insured: false,
+        insurancePaid: 0,
+        luthierStatus: "none",
+        condition: Math.random() < projectRate ? "Project" : item.condition,
+      }))
+      return {
+        ...prev,
+        cash: prev.cash - totalCost,
+        inventory: [...prev.inventory, ...upgradedItems],
+        pendingEncounter: null,
+        messages: [
+          ...prev.messages,
+          createMessage("You grab the lot cheap. It’s messy but profitable.", "success"),
+        ],
+      }
+    })
+  }
+
+  const handleTradeAccept = () => {
+    setGameState((prev) => {
+      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "tradeOffer") return prev
+      const { requestedItem, offeredItem } = prev.pendingEncounter
+      const nextInventory = prev.inventory.filter((item) => item.id !== requestedItem.id)
+      const ownedOffered: OwnedItem = {
+        ...offeredItem,
+        purchasePrice: 0,
+        heatValue: Math.round(offeredItem.hotRisk * 100),
+        acquiredDay: prev.day,
+        inspected: false,
+        authStatus: "none",
+        authMultiplier: 1,
+        insured: false,
+        insurancePaid: 0,
+        luthierStatus: "none",
+      }
+      return {
+        ...prev,
+        inventory: [...nextInventory, ownedOffered],
+        reputation: clamp(prev.reputation + 1, 0, 100),
+        pendingEncounter: null,
+        messages: [
+          ...prev.messages,
+          createMessage(
+            `You trade ${requestedItem.name} for ${offeredItem.name}.`,
+            "success"
+          ),
+        ],
+      }
+    })
+  }
+
+  const handleTradeDecline = () => {
+    setGameState((prev) => {
+      const repPenalty = prev.tradeDeclines >= 2 ? 1 : 0
+      return {
+        ...prev,
+        reputation: clamp(prev.reputation - repPenalty, 0, 100),
+        tradeDeclines: prev.tradeDeclines + 1,
+        pendingEncounter: null,
+        messages: [
+          ...prev.messages,
+          createMessage("You pass. The trader shrugs and walks.", "info"),
+        ],
+      }
+    })
+  }
+
+  const handleMysteriousBuy = () => {
+    setGameState((prev) => {
+      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "mysteriousListing") return prev
+      const item = prev.pendingEncounter.item
+      const slotsUsed = computeSlotsUsed(prev.inventory)
+      if (slotsUsed + item.slots > prev.inventoryCapacity) {
+        return {
+          ...prev,
+          pendingEncounter: null,
+          messages: [
+            ...prev.messages,
+            createMessage("No space for the mystery listing. It disappears.", "warning"),
+          ],
+        }
+      }
+      if (prev.cash < item.priceToday) {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage("Not enough cash to grab that listing.", "warning"),
+          ],
+        }
+      }
+      if (Math.random() < item.scamRisk) {
+        return {
+          ...prev,
+          cash: Math.max(0, prev.cash - item.priceToday),
+          reputation: clamp(prev.reputation - 4, 0, 100),
+          pendingEncounter: null,
+          messages: [
+            ...prev.messages,
+            createMessage("The listing vanishes after payment. You got burned.", "warning"),
+          ],
+        }
+      }
+      const owned: OwnedItem = {
+        ...item,
+        purchasePrice: item.priceToday,
+        heatValue: Math.round(item.hotRisk * 100),
+        acquiredDay: prev.day,
+        inspected: false,
+        authStatus: "none",
+        authMultiplier: 1,
+        insured: false,
+        insurancePaid: 0,
+        luthierStatus: "none",
+      }
+      return {
+        ...prev,
+        cash: prev.cash - item.priceToday,
+        inventory: [...prev.inventory, owned],
+        pendingEncounter: null,
+        messages: [
+          ...prev.messages,
+          createMessage("Proof checks out. You jump on the listing.", "success"),
+        ],
+      }
+    })
+  }
+
+  const handleMysteriousProof = () => {
+    setGameState((prev) => {
+      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "mysteriousListing") return prev
+      const roll = Math.random()
+      if (roll < 0.35) {
+        return {
+          ...prev,
+          pendingEncounter: null,
+          messages: [
+            ...prev.messages,
+            createMessage("You ask for proof. The listing disappears immediately.", "warning"),
+          ],
+        }
+      }
+      return {
+        ...prev,
+        pendingEncounter: {
+          ...prev.pendingEncounter,
+          item: {
+            ...prev.pendingEncounter.item,
+            scamRisk: clamp(prev.pendingEncounter.item.scamRisk - 0.25, 0.05, 0.9),
+          },
+          proofChecked: true,
+        },
+        messages: [
+          ...prev.messages,
+          createMessage("Proof checks out. Scam risk drops.", "info"),
+        ],
+      }
+    })
+  }
+
+  const handleRepairComp = () => {
+    setGameState((prev) => {
+      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "repairScare") return prev
+      const { item, discountPrice } = prev.pendingEncounter
+      const nextInventory = prev.inventory.filter((owned) => owned.id !== item.id)
+      return {
+        ...prev,
+        cash: prev.cash + discountPrice,
+        reputation: clamp(prev.reputation + 1, 0, 100),
+        inventory: nextInventory,
+        pendingEncounter: null,
+        messages: [
+          ...prev.messages,
+          createMessage(`You knock off $${item.purchasePrice - discountPrice} and close the deal.`, "success"),
+        ],
+      }
+    })
+  }
+
+  const handleRepairRefuse = () => {
+    setGameState((prev) => {
+      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "repairScare") return prev
+      return {
+        ...prev,
+        reputation: clamp(prev.reputation - 1, 0, 100),
+        pendingEncounter: null,
+        messages: [
+          ...prev.messages,
+          createMessage("You hold firm. The buyer walks.", "warning"),
+        ],
+      }
+    })
+  }
+
   if (gameState.isGameOver) {
     const score = calculateScore(
       gameState.cash,
@@ -1727,10 +2973,30 @@ export default function FretWarsGame() {
             <p className="text-xs uppercase tracking-widest text-muted-foreground">A StringTree Game</p>
             <h1 className="text-3xl font-bold text-primary">Fret Wars</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              Trade guitars, amps, pedals, and parts across the city. Buy low, sell high, stay clean.
+              Trade guitars, amps, pedals, and parts across the city. Buy low, sell high, keep it legit.
             </p>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
+            <div className="rounded-md border border-border bg-card p-3 text-left">
+              <label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Run Length (Days)
+              </label>
+              <input
+                type="number"
+                min={7}
+                max={60}
+                value={runLength}
+                onChange={(event) => {
+                  const next = Number(event.target.value)
+                  if (Number.isNaN(next)) return
+                  setRunLength(Math.max(7, Math.min(60, Math.round(next))))
+                }}
+                className="mt-2 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                Suggested: 21–30 days for a full run.
+              </p>
+            </div>
             <button
               onClick={handleNewRun}
               className="w-full rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
@@ -1750,6 +3016,14 @@ export default function FretWarsGame() {
             >
               Help
             </button>
+            {!hasSavedGame && (
+              <button
+                onClick={() => setShowStartMenu(false)}
+                className="w-full rounded-md border border-border bg-transparent px-4 py-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+              >
+                Back to Game
+              </button>
+            )}
           </div>
           {showHelp && (
             <div className="rounded-lg border border-border bg-card p-4 text-left text-sm text-muted-foreground">
@@ -1758,7 +3032,7 @@ export default function FretWarsGame() {
                 <li>Buy and sell gear each day to grow cash.</li>
                 <li>Travel ends the day and moves you to a new market.</li>
                 <li>Use "Ask for Proof" to reduce scam risk.</li>
-                <li>Authenticate items to lower heat.</li>
+                <li>Authenticate items to lower provenance risk.</li>
                 <li>Reputation improves prices and reduces risk.</li>
               </ul>
             </div>
@@ -1772,7 +3046,7 @@ export default function FretWarsGame() {
     <div className="flex min-h-dvh flex-col bg-background">
       {/* Mobile Layout */}
       <div className="flex flex-1 flex-col lg:hidden">
-        <Header />
+        <Header onMenu={handleOpenMenu} />
         <StatusBar gameState={gameState} />
         <TerminalFeed messages={gameState.messages} terminalRef={terminalRef} />
         <MarketSection
@@ -1787,7 +3061,7 @@ export default function FretWarsGame() {
       {/* Desktop Layout */}
       <div className="hidden h-dvh lg:grid lg:grid-cols-[280px_1fr_320px]">
         <aside className="flex flex-col border-r border-border bg-card p-4">
-          <Header />
+          <Header onMenu={handleOpenMenu} />
           <StatusBar gameState={gameState} className="mt-4" />
         </aside>
         <main className="flex flex-col overflow-hidden">
@@ -1842,6 +3116,8 @@ export default function FretWarsGame() {
         tools={gameState.tools}
         toolCosts={TOOL_COSTS}
         favorTokens={gameState.favorTokens}
+        performanceMarket={gameState.performanceMarket}
+        performanceItems={gameState.performanceItems}
         getSellPrice={(item) => getSellPrice(item, gameState.market, gameState.reputation)}
         getAuthCost={getAuthCost}
         getLuthierCost={getLuthierCost}
@@ -1851,7 +3127,69 @@ export default function FretWarsGame() {
         onBuyTool={handleBuyTool}
         onCallFavor={handleCallFavor}
         onUseFavor={handleUseFavor}
+        onBuyPerformanceItem={handleBuyPerformanceItem}
       />
+
+      <SellModal
+        isOpen={isSellModalOpen}
+        onClose={() => setIsSellModalOpen(false)}
+        items={gameState.inventory}
+        getSellPrice={(item) => getSellPrice(item, gameState.market, gameState.reputation)}
+        onSell={handleSell}
+        onRepairScare={(item, fullPrice, discountPrice) =>
+          setGameState((prev) => ({
+            ...prev,
+            pendingEncounter: {
+              type: "repairScare",
+              item,
+              fullPrice,
+              discountPrice,
+            },
+          }))
+        }
+      />
+
+      {gameState.pendingDuel && (
+        <DuelModal
+          isOpen={Boolean(gameState.pendingDuel)}
+          challengerLabel={gameState.pendingDuel.challengerLabel}
+          intro={gameState.pendingDuel.intro}
+          options={gameState.pendingDuel.options}
+          performanceItems={gameState.performanceItems.map((item) => ({
+            id: item.id,
+            name: item.name,
+            description: item.description,
+          }))}
+          selectedBoostId={gameState.pendingDuel.selectedBoostId}
+          wagerOffered={gameState.pendingDuel.wagerOffered}
+          wagerAmount={gameState.pendingDuel.wagerAmount}
+          wagerAccepted={gameState.pendingDuel.wagerAccepted}
+          wagerLocked={gameState.pendingDuel.wagerLocked}
+          round={gameState.pendingDuel.round}
+          totalRounds={gameState.pendingDuel.totalRounds}
+          playerScore={gameState.pendingDuel.playerScore}
+          opponentScore={gameState.pendingDuel.opponentScore}
+          lastReaction={gameState.pendingDuel.lastReaction}
+          onToggleWager={handleToggleWager}
+          onSelectBoost={handleSelectBoost}
+          onChoose={resolveDuel}
+          onDecline={handleDuelDecline}
+        />
+      )}
+
+      {gameState.pendingEncounter && (
+        <EncounterModal
+          encounter={gameState.pendingEncounter}
+          onClose={handleEncounterDecline}
+          onBulkBuy={handleBulkLotPurchase}
+          onTradeAccept={handleTradeAccept}
+          onTradeDecline={handleTradeDecline}
+          onMysteryBuy={handleMysteriousBuy}
+          onMysteryProof={handleMysteriousProof}
+          onRepairComp={handleRepairComp}
+          onRepairRefuse={handleRepairRefuse}
+        />
+      )}
     </div>
   )
 }

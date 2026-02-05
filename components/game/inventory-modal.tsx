@@ -24,6 +24,8 @@ interface InventoryModalProps {
     luthierBench: number
   }
   favorTokens: number
+  performanceMarket: { id: string; name: string; description: string; cost: number }[]
+  performanceItems: { id: string; name: string }[]
   getSellPrice: (item: OwnedItem) => number
   getAuthCost: (item: OwnedItem) => number
   getLuthierCost: (item: OwnedItem, target: "Player" | "Mint") => number
@@ -33,6 +35,7 @@ interface InventoryModalProps {
   onBuyTool: (toolKey: "serialScanner" | "priceGuide" | "insurancePlan" | "luthierBench") => void
   onCallFavor: () => void
   onUseFavor: () => void
+  onBuyPerformanceItem: (item: { id: string; name: string; description: string; cost: number }) => void
 }
 
 const getHeatLabel = (heatValue: number) => {
@@ -76,6 +79,8 @@ export function InventoryModal({
   tools,
   toolCosts,
   favorTokens,
+  performanceMarket,
+  performanceItems,
   getSellPrice,
   getAuthCost,
   getLuthierCost,
@@ -85,6 +90,7 @@ export function InventoryModal({
   onBuyTool,
   onCallFavor,
   onUseFavor,
+  onBuyPerformanceItem,
 }: InventoryModalProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -148,6 +154,36 @@ export function InventoryModal({
           </div>
         </div>
 
+        <div className="rounded-lg border border-border bg-secondary/20 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+            Performance Items
+          </p>
+          {performanceMarket.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No performance items today.</p>
+          ) : (
+            <div className="grid gap-2">
+              {performanceMarket.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => onBuyPerformanceItem(item)}
+                  className="flex items-center justify-between rounded-md border border-border bg-secondary px-3 py-2 text-left text-sm text-foreground transition-colors hover:border-primary/60 hover:bg-secondary/80"
+                >
+                  <div>
+                    <div className="font-medium">{item.name}</div>
+                    <div className="text-xs text-muted-foreground">{item.description}</div>
+                  </div>
+                  <span className="text-xs text-muted-foreground">${item.cost}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {performanceItems.length > 0 && (
+            <div className="mt-2 text-xs text-muted-foreground">
+              Owned: {performanceItems.map((item) => item.name).join(", ")}
+            </div>
+          )}
+        </div>
+
         {items.length === 0 ? (
           <p className="text-sm text-muted-foreground">Your gig bag is empty.</p>
         ) : (
@@ -171,7 +207,7 @@ export function InventoryModal({
                         <span>{item.condition}</span>
                         <span>{item.rarity}</span>
                         <span>Slots: {item.slots}</span>
-                        <span>Heat: {heatLabel}</span>
+                        <span>Provenance: {heatLabel}</span>
                         <span>{authLabel}</span>
                         {luthierLabel && <span>{luthierLabel}</span>}
                         {item.insured && <span>Insured</span>}

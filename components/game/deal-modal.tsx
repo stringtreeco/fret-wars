@@ -119,7 +119,7 @@ export function DealModal({
         {isInspected && (
           <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-primary">
             <span>Proof checked.</span>
-            {trustTier && <span>Trust tier: {trustTier}.</span>}
+            {trustTier && <span>Seller vibe: {trustTier}.</span>}
           </div>
         )}
 

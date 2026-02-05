@@ -35,7 +35,7 @@ const locations: Location[] = [
   {
     id: "warehouse",
     name: "The Warehouse District",
-    description: "Bulk deals and estate sales. Watch your back.",
+    description: "Bulk deals and estate sales. Watch the listings.",
     riskLevel: "High",
     travelTime: 3,
   },

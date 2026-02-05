@@ -61,7 +61,7 @@ export function StatusBar({ gameState, className }: StatusBarProps) {
         </div>
         
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Heat</span>
+          <span className="text-muted-foreground">Provenance</span>
           <span
             className={cn(
               "rounded px-2 py-0.5 text-xs font-medium",

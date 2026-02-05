@@ -54,3 +54,25 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  .fret-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground)) transparent;
+  }
+  .fret-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .fret-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .fret-scrollbar::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground));
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .fret-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground));
+  }
+}
