@@ -36,20 +36,32 @@ export function TerminalFeed({ messages, terminalRef, className, onScroll }: Ter
         onScroll={onScroll}
         className="fret-scrollbar flex h-full max-h-[200px] min-h-0 flex-col gap-2 overflow-y-auto lg:max-h-none"
       >
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={cn(
-              "flex items-start gap-2 text-sm leading-relaxed",
-              typeStyles[message.type]
-            )}
-          >
-            <span className="shrink-0 text-primary opacity-60">
-              {typePrefix[message.type]}
-            </span>
-            <span>{message.text}</span>
-          </div>
-        ))}
+        {messages.map((message) =>
+          message.isArt ? (
+            <pre
+              key={message.id}
+              className={cn(
+                "whitespace-pre text-xs leading-tight",
+                typeStyles[message.type]
+              )}
+            >
+              {message.text}
+            </pre>
+          ) : (
+            <div
+              key={message.id}
+              className={cn(
+                "flex items-start gap-2 text-sm leading-relaxed",
+                typeStyles[message.type]
+              )}
+            >
+              <span className="shrink-0 text-primary opacity-60">
+                {typePrefix[message.type]}
+              </span>
+              <span>{message.text}</span>
+            </div>
+          )
+        )}
         <div className="flex items-center gap-1 text-primary">
           <span className="animate-pulse">_</span>
         </div>
