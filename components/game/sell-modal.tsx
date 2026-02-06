@@ -7,27 +7,32 @@ import { Button } from "@/components/ui/button"
 interface SellModalProps {
   isOpen: boolean
   onClose: () => void
+  day: number
   items: OwnedItem[]
   getSellPrice: (item: OwnedItem) => number
   onSell: (item: OwnedItem) => void
   onRepairScare?: (item: OwnedItem, fullPrice: number, discountPrice: number) => void
 }
 
-export function SellModal({ isOpen, onClose, items, getSellPrice, onSell, onRepairScare }: SellModalProps) {
+export function SellModal({ isOpen, onClose, day, items, getSellPrice, onSell, onRepairScare }: SellModalProps) {
   const saleableItems = items.filter(
-    (item) => item.authStatus !== "pending" && item.luthierStatus !== "pending"
+    (item) =>
+      item.authStatus !== "pending" &&
+      item.luthierStatus !== "pending" &&
+      // Can't flip the same day you bought it.
+      (item.acquiredDay < day || Boolean(item.sameDaySellOk))
   )
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg border-border bg-card text-card-foreground">
+      <DialogContent className="fret-scrollbar max-h-[85vh] max-w-lg overflow-y-auto pr-1 border-border bg-card text-card-foreground">
         <DialogHeader>
           <DialogTitle className="text-lg text-foreground">Sell Gear</DialogTitle>
         </DialogHeader>
 
         {saleableItems.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nothing saleable right now. Items in authentication or at the luthier can’t be sold.
+            Nothing saleable right now. Gear bought today (except flash listings), in authentication, or at the luthier can’t be sold yet.
           </p>
         ) : (
           <div className="space-y-3">

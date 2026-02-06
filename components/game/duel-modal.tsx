@@ -144,7 +144,7 @@ export function DuelModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onDecline}>
-      <DialogContent className="max-w-lg border-border bg-card text-card-foreground">
+      <DialogContent className="fret-scrollbar max-h-[85vh] max-w-lg overflow-y-auto pr-1 border-border bg-card text-card-foreground">
         <DialogHeader>
           <DialogTitle className="text-lg text-foreground">Jam Challenge</DialogTitle>
         </DialogHeader>

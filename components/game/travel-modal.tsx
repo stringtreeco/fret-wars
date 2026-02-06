@@ -76,7 +76,7 @@ export function TravelModal({ isOpen, currentLocation, onClose, onTravel }: Trav
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-md border-border bg-card text-card-foreground">
+      <DialogContent className="fret-scrollbar max-h-[85vh] max-w-md overflow-y-auto pr-1 border-border bg-card text-card-foreground">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg text-foreground">
             <MapPin className="h-5 w-5 text-primary" />

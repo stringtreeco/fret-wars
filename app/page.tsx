@@ -12,16 +12,19 @@ import { InventoryModal } from "@/components/game/inventory-modal"
 import { SellModal } from "@/components/game/sell-modal"
 import { DuelModal } from "@/components/game/duel-modal"
 import { EncounterModal } from "@/components/game/encounter-modal"
+import { toast } from "@/hooks/use-toast"
 
 export type HeatLevel = "Low" | "Medium" | "High"
 export type Rarity = "common" | "uncommon" | "rare" | "legendary"
 export type Condition = "Mint" | "Player" | "Project"
+export type BagTier = 0 | 1 | 2
 
 export interface GameState {
   day: number
   totalDays: number
   location: string
   cash: number
+  bagTier: BagTier
   inventoryCapacity: number
   inventory: OwnedItem[]
   reputation: number
@@ -43,8 +46,6 @@ export interface GameState {
     insurancePlan: boolean
     luthierBench: boolean
   }
-  favorTokens: number
-  repoShield: boolean
   pendingDuel: DuelState | null
   pendingEncounter: EncounterState | null
   tradeDeclines: number
@@ -52,6 +53,17 @@ export interface GameState {
   performanceItems: PerformanceItem[]
   market: MarketItem[]
   messages: TerminalMessage[]
+  creditLine: {
+    frozen: boolean
+    loan: null | {
+      principal: number
+      balanceDue: number
+      interestRate: number
+      dueDay: number
+      defaulted: boolean
+      repPenaltyApplied?: boolean
+    }
+  }
   runSeed: string
 }
 
@@ -75,6 +87,7 @@ export interface OwnedItem extends MarketItem {
   purchasePrice: number
   heatValue: number
   acquiredDay: number
+  sameDaySellOk?: boolean
   inspected: boolean
   authStatus: "none" | "pending" | "success" | "partial" | "fail"
   authReadyDay?: number
@@ -142,6 +155,13 @@ export type EncounterState =
       type: "mysteriousListing"
       item: MarketItem
       proofChecked: boolean
+    }
+  | {
+      type: "auction"
+      item: MarketItem
+      startingBid: number
+      buyerPremiumRate: number
+      minReputation: number
     }
   | {
       type: "repairScare"
@@ -1349,6 +1369,95 @@ const getDuelWagerAmount = (challengerId: string) => {
   }
 }
 
+const AUCTION_CHANCE = 0.08
+const AUCTION_BUYER_PREMIUM_RATE = 0.05
+const AUCTION_MIN_REPUTATION = 30
+
+const CREDIT_TERM_DAYS = 3
+const CREDIT_GARNISH_RATE = 0.3
+const BAG_BASE_CAPACITY = 11
+const BAG_TIER_BONUS = 5
+const getBagCapacity = (tier: BagTier) => BAG_BASE_CAPACITY + BAG_TIER_BONUS * tier
+const getBagLabel = (tier: BagTier) => (tier === 2 ? "Flight Case" : tier === 1 ? "Hard Case" : "Gig Bag")
+const inferBagTier = (capacity: number): BagTier => {
+  if (capacity >= BAG_BASE_CAPACITY + BAG_TIER_BONUS * 2) return 2
+  if (capacity >= BAG_BASE_CAPACITY + BAG_TIER_BONUS) return 1
+  return 0
+}
+const getCreditLimit = (reputation: number) => {
+  if (reputation >= 80) return 25_000
+  if (reputation >= 65) return 15_000
+  if (reputation >= 50) return 7_500
+  if (reputation >= 30) return 2_500
+  return 0
+}
+
+const getCreditInterestRate = (reputation: number) => {
+  if (reputation >= 80) return 0.1
+  if (reputation >= 65) return 0.15
+  if (reputation >= 50) return 0.2
+  if (reputation >= 30) return 0.25
+  return 0.35
+}
+
+const pickAuctionLegendary = (runSeed: string, day: number, location: string) => {
+  const rng = mulberry32(hashSeed(`${runSeed}-auction-${day}-${location}`))
+  const legendary = marketCatalog.filter((item) => item.rarity === "legendary")
+  if (legendary.length === 0) return marketCatalog[Math.floor(rng() * marketCatalog.length)]
+  return legendary[Math.floor(rng() * legendary.length)]
+}
+
+const buildAuctionItem = (runSeed: string, day: number, location: string) => {
+  const rng = mulberry32(hashSeed(`${runSeed}-auction-item-${day}-${location}`))
+  const baseItem = pickAuctionLegendary(runSeed, day, location)
+  const rarity = baseItem.rarity
+  const condition = pickWeighted(
+    rng,
+    Object.keys(conditionWeights) as Condition[],
+    Object.values(conditionWeights)
+  )
+  const slots = baseItem.category === "Amp" ? 3 : baseItem.category === "Guitar" ? 2 : 1
+  const basePrice = baseItem.basePrice
+  const priceToday = Math.max(50, Math.round(basePrice * (0.9 + rng() * 0.25)))
+  return {
+    id: buildMarketId(day, location, `auction-${baseItem.name}`),
+    name: baseItem.name,
+    category: baseItem.category,
+    basePrice,
+    priceToday,
+    trend: "stable" as const,
+    rarity,
+    condition,
+    slots,
+    scamRisk: Math.max(0.02, baseItem.scamRisk - 0.15),
+    hotRisk: baseItem.hotRisk,
+    description: baseItem.description,
+    flavorText: `StringTree Live Auction: ${baseItem.flavorText}`,
+  } satisfies MarketItem
+}
+
+const getAuctionStartingBid = (basePrice: number, runSeed: string, day: number, location: string) => {
+  const rng = mulberry32(hashSeed(`${runSeed}-auction-start-${day}-${location}-${basePrice}`))
+  const pct = 0.55 + rng() * 0.18
+  return Math.max(100, Math.round(basePrice * pct))
+}
+
+const getAuctionIncrement = (basePrice: number) => {
+  if (basePrice < 1500) return 25
+  if (basePrice < 4000) return 50
+  if (basePrice < 8000) return 100
+  if (basePrice < 20000) return 250
+  return 500
+}
+
+const simulateAuctionOpponentMax = (basePrice: number, runSeed: string, day: number, location: string) => {
+  const rng = mulberry32(hashSeed(`${runSeed}-auction-opp-${day}-${location}-${basePrice}`))
+  // Opponent max usually lands around 75%–125% of base, with occasional spikes.
+  const spike = rng() < 0.12 ? 0.25 + rng() * 0.45 : 0
+  const pct = 0.75 + rng() * (0.5 + spike)
+  return Math.max(50, Math.round(basePrice * pct))
+}
+
 const hashSeed = (input: string) => {
   let hash = 2166136261
   for (let i = 0; i < input.length; i += 1) {
@@ -1838,6 +1947,7 @@ const ASCII_ART = {
   |  $ LOW   |
   +----------+`,
   repairScare: `  -- is that a crack? --`,
+  theft: `   ____  ____\n  / __ \\/ __ \\\n / /_/ / /_/ /\n/ ____/ ____/\n/_/   /_/ \n  CAR HIT`,
   repo: `  +----------+
   | SERIAL # |
   | CHECKING |
@@ -1866,7 +1976,8 @@ const createInitialGameState = (runSeed: string, totalDays = 30): GameState => {
     totalDays,
     location: "Downtown Music Row",
     cash: 3000,
-    inventoryCapacity: 11,
+    bagTier: 0,
+    inventoryCapacity: getBagCapacity(0),
     inventory: [],
     reputation: 60,
     heatLevel: "Low",
@@ -1881,8 +1992,6 @@ const createInitialGameState = (runSeed: string, totalDays = 30): GameState => {
       insurancePlan: false,
       luthierBench: false,
     },
-    favorTokens: 0,
-    repoShield: false,
     pendingDuel: null,
     pendingEncounter: null,
     tradeDeclines: 0,
@@ -1890,6 +1999,10 @@ const createInitialGameState = (runSeed: string, totalDays = 30): GameState => {
     performanceItems: [],
     market: [...baseMarket, ...intro.specialListings],
     messages: intro.messages,
+    creditLine: {
+      frozen: false,
+      loan: null,
+    },
     runSeed,
   }
 }
@@ -1931,6 +2044,7 @@ export default function FretWarsGame() {
         const fallback = createInitialGameState("seed")
         const merged = { ...fallback, ...parsed }
         setRunLength(typeof merged.totalDays === "number" ? merged.totalDays : 30)
+        const inferredBagTier = (parsed.bagTier ?? inferBagTier(merged.inventoryCapacity ?? fallback.inventoryCapacity)) as BagTier
         const normalizedInventory = (parsed.inventory ?? fallback.inventory).map((item) => ({
           ...item,
           condition: item.condition ?? "Player",
@@ -1947,6 +2061,8 @@ export default function FretWarsGame() {
         const marketHasDetails = parsed.market?.every((item) => item.condition && item.slots && item.rarity)
         setGameState({
           ...merged,
+          bagTier: inferredBagTier,
+          inventoryCapacity: getBagCapacity(inferredBagTier),
           inventory: normalizedInventory,
           market:
             marketHasDetails && parsed.market
@@ -1963,11 +2079,13 @@ export default function FretWarsGame() {
           bestFlip: parsed.bestFlip ?? fallback.bestFlip,
           rarestSold: parsed.rarestSold ?? fallback.rarestSold,
           tools: parsed.tools ?? fallback.tools,
-          favorTokens: parsed.favorTokens ?? fallback.favorTokens,
-          repoShield: parsed.repoShield ?? fallback.repoShield,
           pendingDuel: parsed.pendingDuel ?? fallback.pendingDuel,
           pendingEncounter: parsed.pendingEncounter ?? fallback.pendingEncounter,
           tradeDeclines: parsed.tradeDeclines ?? fallback.tradeDeclines,
+          creditLine: {
+            frozen: parsed.creditLine?.frozen ?? fallback.creditLine.frozen,
+            loan: parsed.creditLine?.loan ?? fallback.creditLine.loan,
+          },
         })
       } catch {
         setGameState(createInitialGameState("seed"))
@@ -2268,12 +2386,60 @@ export default function FretWarsGame() {
     let nextInventory = prev.inventory
     let nextCash = prev.cash
     let nextReputation = prev.reputation
+    let nextCreditLine = prev.creditLine
     const repoMessages: TerminalMessage[] = []
     const authMessages: TerminalMessage[] = []
     const luthierMessages: TerminalMessage[] = []
     const jamMessages: TerminalMessage[] = []
+    const creditMessages: TerminalMessage[] = []
     let pendingDuel: DuelState | null = null
     let pendingEncounter: EncounterState | null = null
+
+    if (nextCreditLine.loan && nextCreditLine.loan.balanceDue > 0) {
+      const loan = nextCreditLine.loan
+      const isPastDue = nextDay > loan.dueDay
+      if (isPastDue) {
+        let nextLoan = loan
+        if (!loan.repPenaltyApplied) {
+          nextReputation = clamp(nextReputation - 5, 0, 100)
+          nextLoan = {
+            ...loan,
+            defaulted: true,
+            repPenaltyApplied: true,
+          }
+          creditMessages.push(
+            createMessage("Dealer Credit Line defaults. The bank freezes your credit.", "warning")
+          )
+          nextCreditLine = { ...nextCreditLine, frozen: true, loan: nextLoan }
+        }
+
+        const garnish = Math.min(nextLoan.balanceDue, Math.round(nextCash * CREDIT_GARNISH_RATE))
+        if (garnish > 0) {
+          nextCash = Math.max(0, nextCash - garnish)
+          const remaining = Math.max(0, nextLoan.balanceDue - garnish)
+          nextLoan = { ...nextLoan, balanceDue: remaining }
+          nextCreditLine = { ...nextCreditLine, loan: nextLoan }
+          creditMessages.push(
+            createMessage(
+              `Bank garnishes $${garnish.toLocaleString()} toward your overdue balance. Remaining: $${remaining.toLocaleString()}.`,
+              "warning"
+            )
+          )
+        }
+
+        if (nextCreditLine.loan && nextCreditLine.loan.balanceDue <= 0) {
+          creditMessages.push(createMessage("Debt cleared. Credit remains frozen this run.", "info"))
+          nextCreditLine = { ...nextCreditLine, loan: null }
+        }
+      } else if (nextDay === loan.dueDay) {
+        creditMessages.push(
+          createMessage(
+            `Dealer Credit Line payment is due today (Day ${loan.dueDay}). Balance: $${loan.balanceDue.toLocaleString()}.`,
+            "warning"
+          )
+        )
+      }
+    }
 
     nextInventory = nextInventory.map((item) => {
       if (item.luthierStatus !== "pending" || !item.luthierReadyDay || item.luthierReadyDay > nextDay) {
@@ -2342,11 +2508,7 @@ export default function FretWarsGame() {
 
     const scannerReduction = prev.tools.serialScanner ? 0.08 : 0
     const finalRepoRisk = clamp(repoRisk - scannerReduction, 0, 0.75)
-    if (prev.repoShield) {
-      repoMessages.push(
-        createMessage("You call in a favor. The market stays quiet tonight.", "success")
-      )
-    } else if (hotItems.length > 0 && Math.random() < finalRepoRisk) {
+    if (hotItems.length > 0 && Math.random() < finalRepoRisk) {
       repoMessages.push(createMessage(ASCII_ART.repo, "warning", true))
       const hottest = [...hotItems].sort((a, b) => b.heatValue - a.heatValue)[0]
       nextInventory = nextInventory.filter((item) => item.id !== hottest.id)
@@ -2401,7 +2563,20 @@ export default function FretWarsGame() {
       )
     }
 
-    if (!pendingDuel && Math.random() < 0.22) {
+    if (!pendingDuel && Math.random() < AUCTION_CHANCE) {
+      const item = buildAuctionItem(prev.runSeed, nextDay, nextLocation)
+      const startingBid = getAuctionStartingBid(item.basePrice, prev.runSeed, nextDay, nextLocation)
+      pendingEncounter = {
+        type: "auction",
+        item,
+        startingBid,
+        buyerPremiumRate: AUCTION_BUYER_PREMIUM_RATE,
+        minReputation: AUCTION_MIN_REPUTATION,
+      }
+      jamMessages.push(
+        createMessage("StringTree Live Auction is live. Legendary lot on the block.", "event")
+      )
+    } else if (!pendingDuel && Math.random() < 0.22) {
       const encounterRoll = Math.random()
       if (encounterRoll < 0.32) {
         const items = pickBulkLotItems(prev.runSeed, nextDay, nextLocation)
@@ -2453,10 +2628,10 @@ export default function FretWarsGame() {
       cash: nextCash,
       reputation: nextReputation,
       inventory: nextInventory,
+      creditLine: nextCreditLine,
       heatLevel: computeHeatLevel(nextInventory),
       inspectedMarketIds: [],
       recentFlipDays: cleanedFlipDays,
-      repoShield: false,
       pendingDuel,
       pendingEncounter,
       messages: [
@@ -2470,6 +2645,7 @@ export default function FretWarsGame() {
         ...(shiftMessage.includes("Collectors are quiet") ? [createMessage(ASCII_ART.collectorsQuiet, "info", true)] : []),
         createMessage(shiftMessage, "event"),
         createMessage(recapMessage, "info"),
+        ...creditMessages,
         ...authMessages,
         ...luthierMessages,
         ...jamMessages,
@@ -2480,15 +2656,59 @@ export default function FretWarsGame() {
 
   const handleTravel = (location: Location) => {
     setGameState((prev) => {
+      const theftMessages: TerminalMessage[] = []
+      let travelInventory = prev.inventory
+      let travelCash = prev.cash
+      let travelRep = prev.reputation
+
+      if (location.riskLevel === "High" && prev.inventory.length > 0) {
+        const slotsUsed = computeSlotsUsed(prev.inventory)
+        const tierBump = prev.bagTier === 2 ? 0.04 : prev.bagTier === 1 ? 0.02 : 0
+        const theftChance = clamp(0.08 + slotsUsed * 0.012 - prev.reputation * 0.0008 + tierBump, 0.03, 0.26)
+        if (Math.random() < theftChance) {
+          // Prefer stealing valuable + portable items.
+          const candidates = [...prev.inventory].sort(
+            (a, b) =>
+              (b.basePrice + b.purchasePrice + b.heatValue * 12 - b.slots * 250) -
+              (a.basePrice + a.purchasePrice + a.heatValue * 12 - a.slots * 250)
+          )
+          const stolen = candidates[0]
+          if (stolen) {
+            travelInventory = prev.inventory.filter((item) => item.id !== stolen.id)
+            travelRep = clamp(travelRep - 2, 0, 100)
+            if (stolen.insured) {
+              const payout = Math.max(0, Math.round(stolen.basePrice * 0.4))
+              travelCash = travelCash + payout
+              theftMessages.push(
+                createMessage(ASCII_ART.theft, "warning", true),
+                createMessage(
+                  `Car break-in. ${stolen.name} is gone. Insurance pays $${payout}.`,
+                  "warning"
+                )
+              )
+            } else {
+              theftMessages.push(
+                createMessage(ASCII_ART.theft, "warning", true),
+                createMessage(`Car break-in. ${stolen.name} is gone.`, "warning")
+              )
+            }
+          }
+        }
+      }
+
       const arrivalMessage =
         location.riskLevel === "High"
           ? createMessage("You feel eyes on you as you arrive.", "warning")
           : location.riskLevel === "Medium"
             ? createMessage("The area seems quiet. For now.", "event")
             : createMessage("You arrive without incident.", "success")
-      return advanceDay(prev, location.name, [
+      return advanceDay(
+        { ...prev, inventory: travelInventory, cash: travelCash, reputation: travelRep },
+        location.name,
+        [
         createMessage(ASCII_ART.travel, "info", true),
         createMessage(`Traveling to ${location.name}... (${location.travelTime}h)`, "info"),
+        ...theftMessages,
         arrivalMessage,
       ])
     })
@@ -2770,6 +2990,15 @@ export default function FretWarsGame() {
           ],
         }
       }
+      if (item.acquiredDay >= prev.day && !item.sameDaySellOk) {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage(`You just picked up ${item.name}. Let it sit overnight before you flip it.`, "info"),
+          ],
+        }
+      }
       const sellPrice = getSellPrice(item, prev.market, prev.reputation)
       const profit = sellPrice - item.purchasePrice
       const nextInventory = prev.inventory.filter((owned) => owned.id !== item.id)
@@ -2927,46 +3156,6 @@ export default function FretWarsGame() {
     })
   }
 
-  const handleCallFavor = () => {
-    setGameState((prev) => {
-      if (prev.reputation < 8) {
-        return {
-          ...prev,
-          messages: [...prev.messages, createMessage("Reputation too low to call in a favor.", "warning")],
-        }
-      }
-      return {
-        ...prev,
-        reputation: clamp(prev.reputation - 8, 0, 100),
-        favorTokens: prev.favorTokens + 1,
-        messages: [...prev.messages, createMessage("You call in a favor. One quiet night banked.", "success")],
-      }
-    })
-  }
-
-  const handleUseFavor = () => {
-    setGameState((prev) => {
-      if (prev.favorTokens <= 0) {
-        return {
-          ...prev,
-          messages: [...prev.messages, createMessage("No favors available to use.", "info")],
-        }
-      }
-      if (prev.repoShield) {
-        return {
-          ...prev,
-          messages: [...prev.messages, createMessage("A favor is already active tonight.", "info")],
-        }
-      }
-      return {
-        ...prev,
-        favorTokens: prev.favorTokens - 1,
-        repoShield: true,
-        messages: [...prev.messages, createMessage("Favor queued. Repo pressure drops tonight.", "success")],
-      }
-    })
-  }
-
   const handleBuyPerformanceItem = (item: PerformanceItem) => {
     setGameState((prev) => {
       if (prev.cash < item.cost) {
@@ -2983,6 +3172,173 @@ export default function FretWarsGame() {
         messages: [
           ...prev.messages,
           createMessage(`Picked up ${item.name} for the next jam.`, "success"),
+        ],
+      }
+    })
+  }
+
+  const handleCreditDraw = (amount: number) => {
+    setGameState((prev) => {
+      const limit = getCreditLimit(prev.reputation)
+      if (prev.creditLine.frozen) {
+        return {
+          ...prev,
+          messages: [...prev.messages, createMessage("Credit line is frozen for the rest of this run.", "warning")],
+        }
+      }
+      if (prev.creditLine.loan) {
+        return {
+          ...prev,
+          messages: [...prev.messages, createMessage("You already have an active loan. Repay it first.", "info")],
+        }
+      }
+      if (limit <= 0) {
+        return {
+          ...prev,
+          messages: [...prev.messages, createMessage("Bank denies the application. Build your rep first.", "warning")],
+        }
+      }
+
+      const clamped = Math.max(0, Math.min(limit, Math.floor(amount)))
+      if (clamped <= 0) {
+        return {
+          ...prev,
+          messages: [...prev.messages, createMessage("No draw amount selected.", "info")],
+        }
+      }
+
+      const rate = getCreditInterestRate(prev.reputation)
+      const dueDay = prev.day + CREDIT_TERM_DAYS
+      const balanceDue = Math.round(clamped * (1 + rate))
+
+      return {
+        ...prev,
+        cash: prev.cash + clamped,
+        creditLine: {
+          ...prev.creditLine,
+          loan: {
+            principal: clamped,
+            balanceDue,
+            interestRate: rate,
+            dueDay,
+            defaulted: false,
+            repPenaltyApplied: false,
+          },
+        },
+        messages: [
+          ...prev.messages,
+          createMessage(`Dealer Credit Line approved. You draw $${clamped.toLocaleString()}.`, "success"),
+          createMessage(
+            `Due Day ${dueDay}: $${balanceDue.toLocaleString()} (${Math.round(rate * 100)}% interest).`,
+            "info"
+          ),
+        ],
+      }
+    })
+  }
+
+  const handleCreditRepay = (amount: number) => {
+    setGameState((prev) => {
+      const loan = prev.creditLine.loan
+      if (!loan) {
+        return {
+          ...prev,
+          messages: [...prev.messages, createMessage("No active loan to repay.", "info")],
+        }
+      }
+
+      const desired = amount > 0 ? Math.floor(amount) : loan.balanceDue
+      const payment = Math.max(0, Math.min(prev.cash, loan.balanceDue, desired))
+      if (payment <= 0) {
+        return {
+          ...prev,
+          messages: [...prev.messages, createMessage("Not enough cash to make a payment.", "warning")],
+        }
+      }
+
+      const remaining = Math.max(0, loan.balanceDue - payment)
+      const cleared = remaining <= 0
+
+      return {
+        ...prev,
+        cash: prev.cash - payment,
+        creditLine: {
+          ...prev.creditLine,
+          loan: cleared ? null : { ...loan, balanceDue: remaining },
+        },
+        messages: [
+          ...prev.messages,
+          createMessage(`Payment sent: $${payment.toLocaleString()}. Remaining: $${remaining.toLocaleString()}.`, "success"),
+          ...(cleared
+            ? [createMessage("Loan cleared. Your credit line is available again.", "info")]
+            : []),
+        ],
+      }
+    })
+  }
+
+  const handleUpgradeCase = () => {
+    // Trigger toast outside of the state updater to avoid setState-during-render warnings.
+    const currentTier = (gameState.bagTier ?? inferBagTier(gameState.inventoryCapacity)) as BagTier
+    const nextTierPreview = (Math.min(2, currentTier + 1) as BagTier)
+    const costPreview = nextTierPreview === 1 ? 2500 : 7500
+    const repReqPreview = nextTierPreview === 1 ? 45 : 70
+    const labelPreview = getBagLabel(nextTierPreview)
+    const canUpgradePreview =
+      currentTier < 2 && gameState.reputation >= repReqPreview && gameState.cash >= costPreview
+
+    if (canUpgradePreview) {
+      toast({
+        title: "Upgrade acquired",
+        description: `${labelPreview} (+5 slots)`,
+        duration: 2200,
+      })
+    }
+
+    setGameState((prev) => {
+      const tier = (prev.bagTier ?? inferBagTier(prev.inventoryCapacity)) as BagTier
+      if (tier >= 2) {
+        return {
+          ...prev,
+          bagTier: tier,
+          inventoryCapacity: getBagCapacity(tier),
+          messages: [...prev.messages, createMessage("You’re already hauling a Flight Case.", "info")],
+        }
+      }
+
+      const nextTier = (tier + 1) as BagTier
+      const cost = nextTier === 1 ? 2500 : 7500
+      const repReq = nextTier === 1 ? 45 : 70
+      const label = getBagLabel(nextTier)
+
+      if (prev.reputation < repReq) {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage(`Bank says no. Requires Rep ${repReq}+ for a ${label}.`, "warning"),
+          ],
+        }
+      }
+      if (prev.cash < cost) {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage(`Not enough cash for a ${label}. Need $${cost.toLocaleString()}.`, "warning"),
+          ],
+        }
+      }
+
+      const nextCapacity = getBagCapacity(nextTier)
+      return {
+        ...prev,
+        cash: prev.cash - cost,
+        bagTier: nextTier,
+        inventoryCapacity: nextCapacity,
+        messages: [
+          ...prev.messages,
+          createMessage(`Upgrade acquired: ${label}. Capacity is now ${nextCapacity} slots.`, "success"),
         ],
       }
     })
@@ -3138,6 +3494,7 @@ export default function FretWarsGame() {
         purchasePrice: item.priceToday,
         heatValue: Math.round(item.hotRisk * 100),
         acquiredDay: prev.day,
+        sameDaySellOk: true,
         inspected: false,
         authStatus: "none",
         authMultiplier: 1,
@@ -3219,6 +3576,119 @@ export default function FretWarsGame() {
         messages: [
           ...prev.messages,
           createMessage("You hold firm. The buyer walks.", "warning"),
+        ],
+      }
+    })
+  }
+
+  const handleAuctionResolve = (maxBid: number) => {
+    setGameState((prev) => {
+      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "auction") return prev
+      const { item, startingBid, buyerPremiumRate, minReputation } = prev.pendingEncounter
+
+      if (prev.reputation < minReputation) {
+        return {
+          ...prev,
+          pendingEncounter: null,
+          messages: [
+            ...prev.messages,
+            createMessage(
+              "StringTree Live Auction is invite-only tonight. Your rep isn't high enough.",
+              "warning"
+            ),
+          ],
+        }
+      }
+
+      const clampedBid = Math.max(0, Math.min(prev.cash, Math.floor(maxBid)))
+      if (clampedBid < startingBid) {
+        return {
+          ...prev,
+          pendingEncounter: null,
+          messages: [
+            ...prev.messages,
+            createMessage(
+              `No bid placed. The lot closes at $${startingBid.toLocaleString()}.`,
+              "info"
+            ),
+          ],
+        }
+      }
+
+      const increment = getAuctionIncrement(item.basePrice)
+      const opponentMax = simulateAuctionOpponentMax(item.basePrice, prev.runSeed, prev.day, prev.location)
+      const opponentWins = opponentMax >= clampedBid
+      const finalPrice = opponentWins
+        ? Math.max(startingBid, clampedBid + increment)
+        : Math.min(clampedBid, Math.max(startingBid, opponentMax + increment))
+
+      if (opponentWins) {
+        return {
+          ...prev,
+          pendingEncounter: null,
+          messages: [
+            ...prev.messages,
+            createMessage(
+              `Bidding climbs past $${clampedBid.toLocaleString()}… SOLD (not to you).`,
+              "warning"
+            ),
+          ],
+        }
+      }
+
+      const premium = Math.round(finalPrice * buyerPremiumRate)
+      const totalCost = finalPrice + premium
+      if (totalCost > prev.cash) {
+        return {
+          ...prev,
+          pendingEncounter: null,
+          messages: [
+            ...prev.messages,
+            createMessage(
+              `You win at $${finalPrice.toLocaleString()}, but the 5% buyer premium pushes it out of reach. The lot is forfeited.`,
+              "warning"
+            ),
+          ],
+        }
+      }
+
+      const slotsUsed = computeSlotsUsed(prev.inventory)
+      if (slotsUsed + item.slots > prev.inventoryCapacity) {
+        return {
+          ...prev,
+          pendingEncounter: null,
+          messages: [
+            ...prev.messages,
+            createMessage(
+              "You win the auction… but your gig bag is full. The lot goes to the runner-up.",
+              "warning"
+            ),
+          ],
+        }
+      }
+
+      const owned: OwnedItem = {
+        ...item,
+        purchasePrice: totalCost,
+        heatValue: Math.round(item.hotRisk * 100),
+        acquiredDay: prev.day,
+        inspected: false,
+        authStatus: "none",
+        authMultiplier: 1,
+        insured: false,
+        insurancePaid: 0,
+        luthierStatus: "none",
+      }
+
+      return {
+        ...prev,
+        cash: prev.cash - totalCost,
+        inventory: [...prev.inventory, owned],
+        pendingEncounter: null,
+        messages: [
+          ...prev.messages,
+          createMessage(`Bidding climbs… SOLD to you for $${finalPrice.toLocaleString()}.`, "success"),
+          createMessage(`StringTree buyer premium (5%): $${premium.toLocaleString()}.`, "info"),
         ],
       }
     })
@@ -3460,11 +3930,20 @@ export default function FretWarsGame() {
         isOpen={isInventoryModalOpen}
         onClose={() => setIsInventoryModalOpen(false)}
         items={gameState.inventory}
+        day={gameState.day}
         reputation={gameState.reputation}
         cash={gameState.cash}
+        bagTier={gameState.bagTier}
+        bagLabel={getBagLabel(gameState.bagTier)}
+        onUpgradeCase={handleUpgradeCase}
+        creditLine={gameState.creditLine}
+        creditLimit={getCreditLimit(gameState.reputation)}
+        creditInterestRate={getCreditInterestRate(gameState.reputation)}
+        creditTermDays={CREDIT_TERM_DAYS}
+        onCreditDraw={handleCreditDraw}
+        onCreditRepay={handleCreditRepay}
         tools={gameState.tools}
         toolCosts={TOOL_COSTS}
-        favorTokens={gameState.favorTokens}
         performanceMarket={gameState.performanceMarket}
         performanceItems={gameState.performanceItems}
         getSellPrice={(item) => getSellPrice(item, gameState.market, gameState.reputation)}
@@ -3474,14 +3953,13 @@ export default function FretWarsGame() {
         onAuthenticate={handleAuthenticate}
         onLuthier={handleLuthier}
         onBuyTool={handleBuyTool}
-        onCallFavor={handleCallFavor}
-        onUseFavor={handleUseFavor}
         onBuyPerformanceItem={handleBuyPerformanceItem}
       />
 
       <SellModal
         isOpen={isSellModalOpen}
         onClose={() => setIsSellModalOpen(false)}
+        day={gameState.day}
         items={gameState.inventory}
         getSellPrice={(item) => getSellPrice(item, gameState.market, gameState.reputation)}
         onSell={handleSell}
@@ -3529,12 +4007,14 @@ export default function FretWarsGame() {
       {gameState.pendingEncounter && (
         <EncounterModal
           encounter={gameState.pendingEncounter}
+          cash={gameState.cash}
           onClose={handleEncounterDecline}
           onBulkBuy={handleBulkLotPurchase}
           onTradeAccept={handleTradeAccept}
           onTradeDecline={handleTradeDecline}
           onMysteryBuy={handleMysteriousBuy}
           onMysteryProof={handleMysteriousProof}
+          onAuctionResolve={handleAuctionResolve}
           onRepairComp={handleRepairComp}
           onRepairRefuse={handleRepairRefuse}
         />

@@ -12,6 +12,8 @@ export function StatusBar({ gameState, className }: StatusBarProps) {
     Medium: "bg-accent/20 text-accent",
     High: "bg-destructive/20 text-destructive",
   }
+  const bagLabel =
+    gameState.bagTier === 2 ? "Flight Case" : gameState.bagTier === 1 ? "Hard Case" : "Gig Bag"
 
   return (
     <div className={cn("bg-card p-4", className)}>
@@ -38,7 +40,7 @@ export function StatusBar({ gameState, className }: StatusBarProps) {
         </div>
         
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Gig Bag</span>
+          <span className="text-muted-foreground">{bagLabel}</span>
           <span className="font-medium text-foreground">
             {gameState.inventory.reduce((sum, item) => sum + item.slots, 0)}/
             {gameState.inventoryCapacity}

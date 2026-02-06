@@ -2,6 +2,7 @@ import React from "react"
 import type { Metadata, Viewport } from 'next'
 import { JetBrains_Mono } from 'next/font/google'
 
+import { Toaster } from "@/components/ui/toaster"
 import './globals.css'
 
 const jetbrainsMono = JetBrains_Mono({ 
@@ -29,7 +30,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${jetbrainsMono.variable} font-mono antialiased`}>{children}</body>
+      <body className={`${jetbrainsMono.variable} font-mono antialiased`}>
+        {children}
+        <Toaster />
+      </body>
     </html>
   )
 }

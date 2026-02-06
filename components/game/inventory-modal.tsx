@@ -4,13 +4,33 @@ import type { OwnedItem } from "@/app/page"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { useMemo, useState } from "react"
 
 interface InventoryModalProps {
   isOpen: boolean
   onClose: () => void
   items: OwnedItem[]
+  day: number
   reputation: number
   cash: number
+  bagTier: 0 | 1 | 2
+  bagLabel: string
+  onUpgradeCase: () => void
+  creditLine: {
+    frozen: boolean
+    loan: null | {
+      principal: number
+      balanceDue: number
+      interestRate: number
+      dueDay: number
+      defaulted: boolean
+    }
+  }
+  creditLimit: number
+  creditInterestRate: number
+  creditTermDays: number
+  onCreditDraw: (amount: number) => void
+  onCreditRepay: (amount: number) => void
   tools: {
     serialScanner: boolean
     priceGuide: boolean
@@ -23,7 +43,6 @@ interface InventoryModalProps {
     insurancePlan: number
     luthierBench: number
   }
-  favorTokens: number
   performanceMarket: { id: string; name: string; description: string; cost: number }[]
   performanceItems: { id: string; name: string }[]
   getSellPrice: (item: OwnedItem) => number
@@ -33,8 +52,6 @@ interface InventoryModalProps {
   onAuthenticate: (item: OwnedItem) => void
   onLuthier: (item: OwnedItem, target: "Player" | "Mint") => void
   onBuyTool: (toolKey: "serialScanner" | "priceGuide" | "insurancePlan" | "luthierBench") => void
-  onCallFavor: () => void
-  onUseFavor: () => void
   onBuyPerformanceItem: (item: { id: string; name: string; description: string; cost: number }) => void
 }
 
@@ -74,11 +91,20 @@ export function InventoryModal({
   isOpen,
   onClose,
   items,
+  day,
   reputation,
   cash,
+  bagTier,
+  bagLabel,
+  onUpgradeCase,
+  creditLine,
+  creditLimit,
+  creditInterestRate,
+  creditTermDays,
+  onCreditDraw,
+  onCreditRepay,
   tools,
   toolCosts,
-  favorTokens,
   performanceMarket,
   performanceItems,
   getSellPrice,
@@ -88,10 +114,33 @@ export function InventoryModal({
   onAuthenticate,
   onLuthier,
   onBuyTool,
-  onCallFavor,
-  onUseFavor,
   onBuyPerformanceItem,
 }: InventoryModalProps) {
+  const safeCreditLine = creditLine ?? { frozen: false, loan: null }
+  const safeBagTier = (bagTier ?? 0) as 0 | 1 | 2
+  const safeBagLabel = bagLabel ?? (safeBagTier === 2 ? "Flight Case" : safeBagTier === 1 ? "Hard Case" : "Gig Bag")
+  const slotsUsed = useMemo(() => items.reduce((sum, item) => sum + item.slots, 0), [items])
+  const capacity = safeBagTier === 2 ? 21 : safeBagTier === 1 ? 16 : 11
+  const [drawInput, setDrawInput] = useState("")
+  const [repayInput, setRepayInput] = useState("")
+
+  const formatMoney = (value: number) => `$${value.toLocaleString()}`
+  const parseMoney = (raw: string) => {
+    const cleaned = raw.replace(/[^0-9]/g, "")
+    return cleaned.length ? Number(cleaned) : 0
+  }
+
+  const drawAmount = useMemo(() => {
+    const raw = parseMoney(drawInput)
+    return Math.max(0, Math.min(creditLimit, Math.floor(raw)))
+  }, [drawInput, creditLimit])
+
+  const repayAmount = useMemo(() => {
+    const raw = parseMoney(repayInput)
+    const balance = safeCreditLine.loan?.balanceDue ?? 0
+    return Math.max(0, Math.min(cash, balance, Math.floor(raw)))
+  }, [repayInput, cash, safeCreditLine.loan])
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden border-border bg-card text-card-foreground">
@@ -99,7 +148,7 @@ export function InventoryModal({
           <DialogTitle className="text-lg text-foreground">Inventory</DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+        <div className="fret-scrollbar flex-1 space-y-3 overflow-y-auto pr-1">
           <div className="rounded-lg border border-border bg-secondary/20 p-3">
           <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
             Tools
@@ -147,16 +196,156 @@ export function InventoryModal({
           <div className="mt-2 text-xs text-muted-foreground">
             Serial Scanner cuts repo/scam risk. Price Guide flags deals. Insurance covers losses. Luthier upgrades condition.
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>Favors: {favorTokens}</span>
-            <Button size="sm" variant="ghost" onClick={onCallFavor} disabled={reputation < 8}>
-              Call in Favor (-8 rep)
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onUseFavor} disabled={favorTokens <= 0}>
-              Use Favor (quiet night)
-            </Button>
-          </div>
+          {/* Favor system removed (Option C). */}
         </div>
+
+          <div className="rounded-lg border border-border bg-secondary/20 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Cases
+            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span>
+                Current: <span className="text-foreground font-medium">{safeBagLabel}</span>
+              </span>
+              <span>
+                Capacity: <span className="text-foreground">{slotsUsed}</span>/
+                <span className="text-foreground">{capacity}</span>
+              </span>
+            </div>
+            {safeBagTier >= 2 ? (
+              <p className="mt-2 text-xs text-muted-foreground">Max tier reached.</p>
+            ) : (
+              <div className="mt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs text-muted-foreground">
+                    Next:{" "}
+                    <span className="text-foreground font-medium">
+                      {safeBagTier === 0 ? "Hard Case" : "Flight Case"}
+                    </span>{" "}
+                    <span className="text-muted-foreground">
+                      ({safeBagTier === 0 ? "+5 slots" : "+5 slots"})
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {safeBagTier === 0 ? "$2,500 · Rep 45+" : "$7,500 · Rep 70+"}
+                  </div>
+                </div>
+                <Button size="sm" variant="outline" onClick={onUpgradeCase} className="mt-2">
+                  Upgrade
+                </Button>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  More capacity, slightly higher break-in risk in sketchy areas.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-border bg-secondary/20 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Dealer Credit Line
+            </p>
+            {creditLimit <= 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Bank says: build your rep. Credit opens at Rep 30+.
+              </p>
+            ) : safeCreditLine.frozen ? (
+              <p className="text-xs text-muted-foreground">
+                Credit is frozen for the rest of this run.
+              </p>
+            ) : safeCreditLine.loan ? (
+              <div className="space-y-2 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-foreground font-medium">
+                    Balance {formatMoney(safeCreditLine.loan.balanceDue)}
+                  </span>
+                  <span>
+                    Due Day {safeCreditLine.loan.dueDay} • {Math.round(safeCreditLine.loan.interestRate * 100)}%
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => onCreditRepay(Math.min(cash, Math.round(safeCreditLine.loan!.balanceDue * 0.25)))}
+                    disabled={cash <= 0}
+                  >
+                    Pay 25%
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => onCreditRepay(Math.min(cash, Math.round(safeCreditLine.loan!.balanceDue * 0.5)))}
+                    disabled={cash <= 0}
+                  >
+                    Pay 50%
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onCreditRepay(safeCreditLine.loan!.balanceDue)}
+                    disabled={cash <= 0}
+                    className="col-span-2"
+                  >
+                    Pay Full
+                  </Button>
+                </div>
+                <div className="grid gap-2">
+                  <input
+                    value={repayInput}
+                    onChange={(e) => setRepayInput(e.target.value)}
+                    placeholder="Custom payment"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
+                    inputMode="numeric"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={() => onCreditRepay(repayAmount)}
+                    disabled={repayAmount <= 0}
+                  >
+                    Pay {formatMoney(repayAmount)}
+                  </Button>
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  Cash on hand: <span className="text-foreground">{formatMoney(cash)}</span> • Today: Day {day}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Limit <span className="text-foreground font-medium">{formatMoney(creditLimit)}</span>
+                  </span>
+                  <span>
+                    {Math.round(creditInterestRate * 100)}% • due in {creditTermDays} days
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => onCreditDraw(Math.round(creditLimit * 0.25))}>
+                    Draw 25%
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => onCreditDraw(Math.round(creditLimit * 0.5))}>
+                    Draw 50%
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => onCreditDraw(creditLimit)} className="col-span-2">
+                    Draw {formatMoney(creditLimit)}
+                  </Button>
+                </div>
+                <div className="grid gap-2">
+                  <input
+                    value={drawInput}
+                    onChange={(e) => setDrawInput(e.target.value)}
+                    placeholder="Custom draw"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
+                    inputMode="numeric"
+                  />
+                  <Button size="sm" onClick={() => onCreditDraw(drawAmount)} disabled={drawAmount <= 0}>
+                    Draw {formatMoney(drawAmount)}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="rounded-lg border border-border bg-secondary/20 p-3">
             <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
               Performance Items
