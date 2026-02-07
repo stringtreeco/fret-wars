@@ -197,7 +197,14 @@ const introMessagePool: Array<{
   id: string
   text: string
   type: TerminalMessage["type"]
-  listingTag?: "vintage_fender" | "touring_band" | "pedal_hype" | "pickup_batch" | "studio_dump"
+  listingTag?:
+    | "vintage_fender"
+    | "touring_band"
+    | "pedal_hype"
+    | "pickup_batch"
+    | "studio_dump"
+    | "festival_weekend"
+    | "parts_flood"
 }> = [
   {
     id: "pedal_hype",
@@ -215,6 +222,7 @@ const introMessagePool: Array<{
     id: "parts_flood",
     text: "A local tech warns: 'Watch out for the '62 parts flooding in.'",
     type: "warning",
+    listingTag: "parts_flood",
   },
   {
     id: "studio_dump",
@@ -238,6 +246,7 @@ const introMessagePool: Array<{
     id: "festival_weekend",
     text: "Local listings spike after a festival weekend.",
     type: "event",
+    listingTag: "festival_weekend",
   },
 ]
 
@@ -1084,13 +1093,15 @@ const marketCatalog = [
   },
 ]
 
-const marketShiftMessages = [
-  "Influencer hype nudges boutique prices upward.",
-  "Estate sale glut lowers vintage asking prices.",
-  "Pawn shops are flush after a touring weekend.",
-  "Collectors are quiet today. Fewer bidding wars.",
-  "Word is a shop just got audited. Sellers are nervous.",
-]
+const marketShiftEvents = [
+  { id: "hype", text: "Influencer hype nudges boutique prices upward." },
+  { id: "estate_glut", text: "Estate sale glut lowers vintage asking prices." },
+  { id: "pawn_flush", text: "Pawn shops are flush after a touring weekend." },
+  { id: "collectors_quiet", text: "Collectors are quiet today. Fewer bidding wars." },
+  { id: "audit_nerves", text: "Word is a shop just got audited. Sellers are nervous." },
+] as const
+
+type MarketShiftEvent = (typeof marketShiftEvents)[number]
 
 const repoMessages = [
   "A venue manager runs serial checks. Provenance gets tense.",
@@ -1632,9 +1643,119 @@ const generatePerformanceMarket = (day: number, location: string, runSeed: strin
   return picks
 }
 
-const getMarketShiftMessage = (day: number, location: string, runSeed: string) => {
+const getMarketShiftEvent = (day: number, location: string, runSeed: string): MarketShiftEvent => {
   const rng = mulberry32(hashSeed(`${runSeed}-shift-${day}-${location}`))
-  return marketShiftMessages[Math.floor(rng() * marketShiftMessages.length)]
+  return marketShiftEvents[Math.floor(rng() * marketShiftEvents.length)]
+}
+
+const applyMarketShift = (
+  shift: MarketShiftEvent,
+  market: MarketItem[],
+  runSeed: string,
+  day: number,
+  location: string
+) => {
+  if (shift.id === "pawn_flush") {
+    const rng = mulberry32(hashSeed(`${runSeed}-super-deals-${day}-${location}`))
+    const dealCount = rng() < 0.5 ? 1 : 2
+    const indices = market
+      .map((_, index) => index)
+      .sort(() => rng() - 0.5)
+      .slice(0, dealCount)
+    return market.map((item, index) => {
+      if (!indices.includes(index)) return item
+      const superPrice = Math.max(30, Math.round(item.basePrice * (0.45 + rng() * 0.15)))
+      return {
+        ...item,
+        priceToday: superPrice,
+        trend: "down" as const,
+        flavorText: `Pawn shop deal: ${item.flavorText}`,
+      }
+    })
+  }
+
+  if (shift.id === "hype") {
+    const rng = mulberry32(hashSeed(`${runSeed}-hype-${day}-${location}`))
+    const hypeTargets = market
+      .map((item, index) => ({ item, index }))
+      .filter((entry) => entry.item.category === "Pedal")
+      .sort(() => rng() - 0.5)
+      .slice(0, 2)
+    const targetIndices = new Set(hypeTargets.map((entry) => entry.index))
+    return market.map((item, index) => {
+      if (!targetIndices.has(index)) return item
+      const spike = Math.round(item.basePrice * (1.2 + rng() * 0.2))
+      return {
+        ...item,
+        priceToday: spike,
+        trend: "up" as const,
+        flavorText: `Hype spike: ${item.flavorText}`,
+      }
+    })
+  }
+
+  if (shift.id === "estate_glut") {
+    const rng = mulberry32(hashSeed(`${runSeed}-estate-${day}-${location}`))
+    const vintageTargets = market
+      .map((item, index) => ({ item, index }))
+      .filter((entry) => entry.item.category === "Guitar" || entry.item.category === "Amp")
+      .sort(() => rng() - 0.5)
+      .slice(0, 2)
+    const targetIndices = new Set(vintageTargets.map((entry) => entry.index))
+    return market.map((item, index) => {
+      if (!targetIndices.has(index)) return item
+      const discount = Math.round(item.basePrice * (0.65 + rng() * 0.15))
+      return {
+        ...item,
+        priceToday: discount,
+        trend: "down" as const,
+        flavorText: `Estate sale find: ${item.flavorText}`,
+      }
+    })
+  }
+
+  if (shift.id === "collectors_quiet") {
+    const rng = mulberry32(hashSeed(`${runSeed}-collectors-${day}-${location}`))
+    const rareTargets = market
+      .map((item, index) => ({ item, index }))
+      .filter((entry) => entry.item.rarity === "rare" || entry.item.rarity === "legendary")
+      .sort(() => rng() - 0.5)
+      .slice(0, 2)
+    const targetIndices = new Set(rareTargets.map((entry) => entry.index))
+    return market.map((item, index) => {
+      if (!targetIndices.has(index)) return item
+      const discount = Math.round(item.basePrice * (0.75 + rng() * 0.1))
+      return {
+        ...item,
+        priceToday: discount,
+        trend: "down" as const,
+        flavorText: `Soft market: ${item.flavorText}`,
+      }
+    })
+  }
+
+  if (shift.id === "audit_nerves") {
+    // Sellers get nervous: fewer clean deals, and high-end listings demand a premium.
+    const rng = mulberry32(hashSeed(`${runSeed}-audit-${day}-${location}`))
+    const targets = market
+      .map((item, index) => ({ item, index }))
+      .filter((entry) => entry.item.rarity === "rare" || entry.item.rarity === "legendary")
+      .sort(() => rng() - 0.5)
+      .slice(0, 2)
+    const targetIndices = new Set(targets.map((entry) => entry.index))
+    return market.map((item, index) => {
+      if (!targetIndices.has(index)) return item
+      const premium = Math.max(item.priceToday, Math.round(item.basePrice * (1.05 + rng() * 0.2)))
+      return {
+        ...item,
+        priceToday: premium,
+        trend: "up" as const,
+        flavorText: `Audit premium: ${item.flavorText}`,
+      }
+    })
+  }
+
+  return market
 }
 
 const getMarketRecap = (market: MarketItem[]) => {
@@ -1676,8 +1797,9 @@ const computeHeatLevel = (inventory: OwnedItem[]): HeatLevel => {
 const computeSlotsUsed = (inventory: OwnedItem[]) =>
   inventory.reduce((sum, item) => sum + item.slots, 0)
 
-const getTrustTier = (scamRisk: number, reputation: number) => {
-  const adjustedRisk = clamp(scamRisk - reputation * 0.002, 0, 1)
+const getTrustTier = (scamRisk: number, reputation: number, isInspected = false) => {
+  const proofBonus = isInspected ? 0.1 : 0
+  const adjustedRisk = clamp(scamRisk - reputation * 0.002 - proofBonus, 0, 1)
   if (adjustedRisk < 0.15) return "Verified"
   if (adjustedRisk < 0.3) return "Mixed"
   return "Sketchy"
@@ -1778,13 +1900,15 @@ const buildSpecialListingFromPool = (
   day: number,
   location: string,
   runSeed: string,
-  tag: string
+  tag: string,
+  variant = 0
 ) => {
   if (pool.length === 0) return null
-  const rng = mulberry32(hashSeed(`${runSeed}-intro-${tag}-${day}-${location}`))
+  const rng = mulberry32(hashSeed(`${runSeed}-intro-${tag}-${day}-${location}-${variant}`))
   const baseItem = pool[Math.floor(rng() * pool.length)]
-  const condition = "Mint" as Condition
-  const priceToday = Math.round(baseItem.basePrice * 0.78)
+  const condition = tag === "festival_weekend" || tag === "parts_flood" ? ("Player" as Condition) : ("Mint" as Condition)
+  const priceFactor = tag === "festival_weekend" ? 0.86 : tag === "parts_flood" ? 0.72 : 0.78
+  const priceToday = Math.round(baseItem.basePrice * priceFactor * conditionMultiplier[condition])
   const slots = baseItem.category === "Amp" ? 3 : baseItem.category === "Guitar" ? 2 : 1
   return {
     id: buildMarketId(`${baseItem.name}-intro`, day, location, Math.floor(rng() * 1000)),
@@ -1796,10 +1920,18 @@ const buildSpecialListingFromPool = (
     rarity: baseItem.rarity,
     condition,
     slots,
-    scamRisk: Math.max(0.04, baseItem.scamRisk - 0.1),
+    scamRisk:
+      tag === "parts_flood"
+        ? clamp(baseItem.scamRisk + 0.18, 0.08, 0.9)
+        : Math.max(0.04, baseItem.scamRisk - 0.1),
     hotRisk: baseItem.hotRisk,
     description: baseItem.description,
-    flavorText: `Special lead: ${baseItem.flavorText}`,
+    flavorText:
+      tag === "festival_weekend"
+        ? `Festival weekend listing: ${baseItem.flavorText}`
+        : tag === "parts_flood"
+          ? `Flood listing: ${baseItem.flavorText}`
+          : `Special lead: ${baseItem.flavorText}`,
   } satisfies MarketItem
 }
 
@@ -1848,9 +1980,18 @@ const pickIntroBundle = (runSeed: string, day: number, location: string) => {
       case "studio_dump":
         pool = marketCatalog.filter((item) => item.category === "Amp" || item.category === "Pedal")
         break
+      case "festival_weekend":
+        pool = marketCatalog.filter((item) => item.category === "Pedal" || item.category === "Parts")
+        break
+      case "parts_flood":
+        pool = marketCatalog.filter((item) => item.category === "Parts")
+        break
     }
-    const listing = buildSpecialListingFromPool(pool, day, location, runSeed, message.listingTag)
-    if (listing) specialListings.push(listing)
+    const variants = message.listingTag === "festival_weekend" ? 2 : 1
+    for (let v = 0; v < variants; v += 1) {
+      const listing = buildSpecialListingFromPool(pool, day, location, runSeed, message.listingTag, v)
+      if (listing) specialListings.push(listing)
+    }
   })
 
   return { messages, specialListings }
@@ -2034,6 +2175,7 @@ export default function FretWarsGame() {
   const trackedRunCompleteRef = useRef<string | null>(null)
   const trackedEncounterKeyRef = useRef<string | null>(null)
   const trackedDuelKeyRef = useRef<string | null>(null)
+  const lastAskProofToastRef = useRef<string | null>(null)
   const terminalRef = useRef<HTMLDivElement>(null)
   const didHydrateRef = useRef(false)
   const autoScrollRef = useRef(true)
@@ -2351,8 +2493,15 @@ export default function FretWarsGame() {
 
   const handleAskProof = () => {
     if (!selectedItem) return
+    const snapshot = gameStateRef.current
+    const actionKey = `${snapshot.runSeed}-${snapshot.day}-${selectedItem.id}`
+    let toastTitle: string | null = null
+    let toastDescription: string | undefined
+    let toastVariant: "default" | "destructive" | undefined
     setGameState((prev) => {
       if (prev.inspectedMarketIds.includes(selectedItem.id)) {
+        toastTitle = "Proof already checked"
+        toastDescription = "You already pushed for proof on this listing."
         return {
           ...prev,
           messages: [
@@ -2363,6 +2512,9 @@ export default function FretWarsGame() {
       }
       const walkChance = clamp(0.2 + selectedItem.scamRisk * 0.3 - prev.reputation * 0.002, 0.05, 0.45)
       if (Math.random() < walkChance) {
+        toastTitle = "Seller walked"
+        toastDescription = "They pulled the listing when you asked for proof."
+        toastVariant = "destructive"
         return {
           ...prev,
           market: prev.market.filter((item) => item.id !== selectedItem.id),
@@ -2373,6 +2525,13 @@ export default function FretWarsGame() {
         }
       }
       const repChange = selectedItem.scamRisk < 0.15 ? -1 : selectedItem.scamRisk >= 0.35 ? 1 : 0
+      toastTitle = "Proof checked"
+      toastDescription =
+        repChange === 1
+          ? "You get a clearer read. Rep +1."
+          : repChange === -1
+            ? "You get a clearer read. Rep -1."
+            : "You get a clearer read."
       return {
         ...prev,
         reputation: clamp(prev.reputation + repChange, 0, 100),
@@ -2389,6 +2548,19 @@ export default function FretWarsGame() {
         ],
       }
     })
+
+    if (toastTitle) {
+      const toastKey = `${actionKey}-${toastTitle}`
+      if (lastAskProofToastRef.current !== toastKey) {
+        lastAskProofToastRef.current = toastKey
+        toast({
+          title: toastTitle,
+          description: toastDescription,
+          variant: toastVariant,
+          duration: toastVariant === "destructive" ? 3000 : 2200,
+        })
+      }
+    }
   }
 
   const handleWalkAway = () => {
@@ -2417,82 +2589,8 @@ export default function FretWarsGame() {
     const nextDay = prev.day + 1
     let nextMarket = generateMarket(nextDay, nextLocation, prev.runSeed)
     const nextPerformanceMarket = generatePerformanceMarket(nextDay, nextLocation, prev.runSeed)
-    const shiftMessage = getMarketShiftMessage(nextDay, nextLocation, prev.runSeed)
-    if (shiftMessage === "Pawn shops are flush after a touring weekend.") {
-      const rng = mulberry32(hashSeed(`${prev.runSeed}-super-deals-${nextDay}-${nextLocation}`))
-      const dealCount = rng() < 0.5 ? 1 : 2
-      const indices = nextMarket
-        .map((_, index) => index)
-        .sort(() => rng() - 0.5)
-        .slice(0, dealCount)
-      nextMarket = nextMarket.map((item, index) => {
-        if (!indices.includes(index)) return item
-        const superPrice = Math.max(30, Math.round(item.basePrice * (0.45 + rng() * 0.15)))
-        return {
-          ...item,
-          priceToday: superPrice,
-          trend: "down",
-          flavorText: `Pawn shop deal: ${item.flavorText}`,
-        }
-      })
-    } else if (shiftMessage === "Influencer hype nudges boutique prices upward.") {
-      const rng = mulberry32(hashSeed(`${prev.runSeed}-hype-${nextDay}-${nextLocation}`))
-      const hypeTargets = nextMarket
-        .map((item, index) => ({ item, index }))
-        .filter((entry) => entry.item.category === "Pedal")
-        .sort(() => rng() - 0.5)
-        .slice(0, 2)
-      const targetIndices = new Set(hypeTargets.map((entry) => entry.index))
-      nextMarket = nextMarket.map((item, index) => {
-        if (!targetIndices.has(index)) return item
-        const spike = Math.round(item.basePrice * (1.2 + rng() * 0.2))
-        return {
-          ...item,
-          priceToday: spike,
-          trend: "up",
-          flavorText: `Hype spike: ${item.flavorText}`,
-        }
-      })
-    } else if (shiftMessage === "Estate sale glut lowers vintage asking prices.") {
-      const rng = mulberry32(hashSeed(`${prev.runSeed}-estate-${nextDay}-${nextLocation}`))
-      const vintageTargets = nextMarket
-        .map((item, index) => ({ item, index }))
-        .filter(
-          (entry) =>
-            entry.item.category === "Guitar" || entry.item.category === "Amp"
-        )
-        .sort(() => rng() - 0.5)
-        .slice(0, 2)
-      const targetIndices = new Set(vintageTargets.map((entry) => entry.index))
-      nextMarket = nextMarket.map((item, index) => {
-        if (!targetIndices.has(index)) return item
-        const discount = Math.round(item.basePrice * (0.65 + rng() * 0.15))
-        return {
-          ...item,
-          priceToday: discount,
-          trend: "down",
-          flavorText: `Estate sale find: ${item.flavorText}`,
-        }
-      })
-    } else if (shiftMessage === "Collectors are quiet today. Fewer bidding wars.") {
-      const rng = mulberry32(hashSeed(`${prev.runSeed}-collectors-${nextDay}-${nextLocation}`))
-      const rareTargets = nextMarket
-        .map((item, index) => ({ item, index }))
-        .filter((entry) => entry.item.rarity === "rare" || entry.item.rarity === "legendary")
-        .sort(() => rng() - 0.5)
-        .slice(0, 2)
-      const targetIndices = new Set(rareTargets.map((entry) => entry.index))
-      nextMarket = nextMarket.map((item, index) => {
-        if (!targetIndices.has(index)) return item
-        const discount = Math.round(item.basePrice * (0.75 + rng() * 0.1))
-        return {
-          ...item,
-          priceToday: discount,
-          trend: "down",
-          flavorText: `Soft market: ${item.flavorText}`,
-        }
-      })
-    }
+    const shiftEvent = getMarketShiftEvent(nextDay, nextLocation, prev.runSeed)
+    nextMarket = applyMarketShift(shiftEvent, nextMarket, prev.runSeed, nextDay, nextLocation)
     const recapMessage = getMarketRecap(nextMarket)
     const cleanedFlipDays = prev.recentFlipDays.filter((day) => nextDay - day <= 5)
     const totalHeat = prev.inventory.reduce((sum, item) => sum + item.heatValue, 0)
@@ -2759,11 +2857,13 @@ export default function FretWarsGame() {
         ...extraMessages,
         createMessage(`--- Day ${nextDay} --- ${nextLocation} ---`, "event", true),
         createMessage(`Day ${nextDay} begins. New deals appear...`, "event"),
-        ...(shiftMessage.includes("Pawn shops") ? [createMessage(ASCII_ART.pawnDeal, "event", true)] : []),
-        ...(shiftMessage.includes("Influencer hype") ? [createMessage(ASCII_ART.hype, "event", true)] : []),
-        ...(shiftMessage.includes("Estate sale") ? [createMessage(ASCII_ART.estate, "event", true)] : []),
-        ...(shiftMessage.includes("Collectors are quiet") ? [createMessage(ASCII_ART.collectorsQuiet, "info", true)] : []),
-        createMessage(shiftMessage, "event"),
+        ...(shiftEvent.id === "pawn_flush" ? [createMessage(ASCII_ART.pawnDeal, "event", true)] : []),
+        ...(shiftEvent.id === "hype" ? [createMessage(ASCII_ART.hype, "event", true)] : []),
+        ...(shiftEvent.id === "estate_glut" ? [createMessage(ASCII_ART.estate, "event", true)] : []),
+        ...(shiftEvent.id === "collectors_quiet"
+          ? [createMessage(ASCII_ART.collectorsQuiet, "info", true)]
+          : []),
+        createMessage(shiftEvent.text, "event"),
         createMessage(recapMessage, "info"),
         ...creditMessages,
         ...authMessages,
@@ -3060,9 +3160,6 @@ export default function FretWarsGame() {
       if (nextPlayerScore >= nextOpponentScore + 8) outcome = "win"
       if (nextPlayerScore <= nextOpponentScore - 8) outcome = "lose"
 
-      const cashReward =
-        challenger.cashMin +
-        Math.floor(Math.random() * (challenger.cashMax - challenger.cashMin + 1))
       const wager = prev.pendingDuel.wagerAmount
 
       let nextCash = prev.cash
@@ -3072,12 +3169,14 @@ export default function FretWarsGame() {
       const duelMessages: TerminalMessage[] = []
 
       if (outcome === "win") {
-        nextCash += cashReward + wager
+        nextCash += wager
         nextRep = clamp(nextRep + challenger.repWin + option.repBonusOnWin + boostRepBonus, 0, 100)
         duelMessages.push(
           createMessage(ASCII_ART.duelWin, "success", true),
           createMessage(randomFrom(challenger.win), "success"),
-          createMessage(`You collect $${cashReward}${wager ? ` + $${wager} wager` : ""}.`, "success")
+          ...(wager
+            ? [createMessage(`You win the $${wager} wager.`, "success")]
+            : [createMessage("You win the jam.", "success")])
         )
         if (Math.random() < challenger.rareRewardChance) {
           if (Math.random() < 0.5) {
@@ -3113,10 +3212,9 @@ export default function FretWarsGame() {
                 )
               )
             } else {
-              nextCash += 150
               duelMessages.push(
                 createMessage(
-                  "Rare reward offered, but your gig bag is full. You take $150 instead.",
+                  "Rare reward offered, but your gig bag is full. The prize slips away.",
                   "event"
                 )
               )
@@ -4228,6 +4326,12 @@ export default function FretWarsGame() {
             >
               Continue
             </button>
+            <a
+              href="/leaderboard"
+              className="block w-full rounded-md border border-border bg-secondary px-4 py-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-secondary/80"
+            >
+              Leaderboard
+            </a>
             <button
               onClick={() => setShowHelp((prev) => !prev)}
               className="w-full rounded-md border border-border bg-transparent px-4 py-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
@@ -4274,6 +4378,7 @@ export default function FretWarsGame() {
         <MarketSection
           items={gameState.market}
           onItemSelect={handleItemSelect}
+          inspectedIds={gameState.inspectedMarketIds}
           showDeals={gameState.tools.priceGuide}
           isDeal={isSmokingDeal}
         />
@@ -4299,6 +4404,7 @@ export default function FretWarsGame() {
           <MarketSection
             items={gameState.market}
             onItemSelect={handleItemSelect}
+            inspectedIds={gameState.inspectedMarketIds}
             showDeals={gameState.tools.priceGuide}
             isDeal={isSmokingDeal}
           />
@@ -4313,7 +4419,8 @@ export default function FretWarsGame() {
           selectedItem
             ? getTrustTier(
                 selectedItem.scamRisk - (gameState.tools.serialScanner ? 0.05 : 0),
-                gameState.reputation
+                gameState.reputation,
+                isSelectedInspected
               )
             : undefined
         }

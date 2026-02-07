@@ -76,14 +76,21 @@ export function DealModal({
             >
               {item.name}
             </h2>
-            <span
-              className={cn(
-                "text-xs font-medium uppercase tracking-wider",
-                categoryColors[item.category]
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span
+                className={cn(
+                  "text-xs font-medium uppercase tracking-wider",
+                  categoryColors[item.category]
+                )}
+              >
+                {item.category}
+              </span>
+              {isInspected && (
+                <span className="rounded bg-chart-4/10 px-2 py-0.5 text-[11px] font-semibold text-chart-4">
+                  Proof checked
+                </span>
               )}
-            >
-              {item.category}
-            </span>
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -118,7 +125,6 @@ export function DealModal({
         </p>
         {isInspected && (
           <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-primary">
-            <span>Proof checked.</span>
             {trustTier && <span>Seller vibe: {trustTier}.</span>}
           </div>
         )}
@@ -154,7 +160,7 @@ export function DealModal({
               disabled={isInspected}
               className="flex min-h-[44px] items-center justify-center rounded-md border border-border bg-secondary px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-accent hover:bg-accent/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Ask for Proof
+              {isInspected ? "Proof Checked" : "Ask for Proof"}
             </button>
             <button
               onClick={onWalkAway}

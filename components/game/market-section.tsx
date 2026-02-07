@@ -6,11 +6,18 @@ import { cn } from "@/lib/utils"
 interface MarketSectionProps {
   items: MarketItem[]
   onItemSelect: (item: MarketItem) => void
+  inspectedIds?: string[]
   showDeals?: boolean
   isDeal?: (item: MarketItem) => boolean
 }
 
-export function MarketSection({ items, onItemSelect, showDeals = false, isDeal }: MarketSectionProps) {
+export function MarketSection({
+  items,
+  onItemSelect,
+  inspectedIds = [],
+  showDeals = false,
+  isDeal,
+}: MarketSectionProps) {
   const categoryColors = {
     Guitar: "bg-primary/10 text-primary border-primary/20",
     Amp: "bg-accent/10 text-accent border-accent/20",
@@ -48,6 +55,11 @@ export function MarketSection({ items, onItemSelect, showDeals = false, isDeal }
                 <span>{item.condition}</span>
                 <span>{item.rarity}</span>
                 <span>Slots: {item.slots}</span>
+                {inspectedIds.includes(item.id) && (
+                  <span className="rounded bg-chart-4/10 px-1.5 py-0.5 text-[10px] font-semibold text-chart-4">
+                    Proof
+                  </span>
+                )}
                 {showDeals && isDeal && isDeal(item) && (
                   <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                     Deal
