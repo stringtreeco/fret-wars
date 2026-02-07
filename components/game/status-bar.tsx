@@ -14,6 +14,7 @@ export function StatusBar({ gameState, className }: StatusBarProps) {
   }
   const bagLabel =
     gameState.bagTier === 2 ? "Flight Case" : gameState.bagTier === 1 ? "Hard Case" : "Gig Bag"
+  const debt = gameState.creditLine?.loan?.balanceDue ?? 0
 
   return (
     <div className={cn("bg-card p-4", className)}>
@@ -36,6 +37,13 @@ export function StatusBar({ gameState, className }: StatusBarProps) {
           <span className="text-muted-foreground">Cash</span>
           <span className="font-medium text-primary">
             ${gameState.cash.toLocaleString()}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Debt</span>
+          <span className={cn("font-medium", debt > 0 ? "text-foreground" : "text-muted-foreground")}>
+            ${Math.round(debt).toLocaleString()}
           </span>
         </div>
         

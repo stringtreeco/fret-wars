@@ -12,6 +12,7 @@ import { InventoryModal } from "@/components/game/inventory-modal"
 import { SellModal } from "@/components/game/sell-modal"
 import { DuelModal } from "@/components/game/duel-modal"
 import { EncounterModal } from "@/components/game/encounter-modal"
+import { PlayerAuctionModal } from "@/components/game/player-auction-modal"
 import { toast } from "@/hooks/use-toast"
 import { clearRunContext, setRunContext, track } from "@/lib/analytics"
 
@@ -89,6 +90,12 @@ export interface OwnedItem extends MarketItem {
   heatValue: number
   acquiredDay: number
   sameDaySellOk?: boolean
+  saleBlockedUntilDay?: number
+  auctionStatus?: "none" | "listed"
+  auctionListedDay?: number
+  auctionResolveDay?: number
+  auctionBuyerPremiumRate?: number
+  auctionBaselinePrice?: number
   inspected: boolean
   authStatus: "none" | "pending" | "success" | "partial" | "fail"
   authReadyDay?: number
@@ -163,6 +170,20 @@ export type EncounterState =
       startingBid: number
       buyerPremiumRate: number
       minReputation: number
+      resolved?: {
+        outcome:
+          | "blocked"
+          | "no_bid"
+          | "passed"
+          | "outbid"
+          | "won"
+          | "forfeited"
+          | "no_space"
+        maxBid: number
+        finalPrice?: number
+        premium?: number
+        totalCost?: number
+      }
     }
   | {
       type: "repairScare"
@@ -1097,7 +1118,7 @@ const marketShiftEvents = [
   { id: "hype", text: "Influencer hype nudges boutique prices upward." },
   { id: "estate_glut", text: "Estate sale glut lowers vintage asking prices." },
   { id: "pawn_flush", text: "Pawn shops are flush after a touring weekend." },
-  { id: "collectors_quiet", text: "Collectors are quiet today. Fewer bidding wars." },
+  { id: "collectors_quiet", text: "Collectors are quiet today. Not as much competition for deals." },
   { id: "audit_nerves", text: "Word is a shop just got audited. Sellers are nervous." },
 ] as const
 
@@ -1150,6 +1171,8 @@ const TOOL_COSTS = {
   insurancePlan: 300,
   luthierBench: 500,
 }
+
+const PLAYER_AUCTION_BUYER_PREMIUM_RATE = 0.05
 
 const performanceCatalog: PerformanceItem[] = [
   {
@@ -1430,7 +1453,9 @@ const buildAuctionItem = (runSeed: string, day: number, location: string) => {
   )
   const slots = baseItem.category === "Amp" ? 3 : baseItem.category === "Guitar" ? 2 : 1
   const basePrice = baseItem.basePrice
-  const priceToday = Math.max(50, Math.round(basePrice * (0.9 + rng() * 0.25)))
+  // Auctions swing harder than regular market listings: big steals and big blowouts.
+  const swing = 0.65 + rng() * 1.1 // 65%–175%
+  const priceToday = Math.max(50, Math.round(basePrice * swing * conditionMultiplier[condition]))
   return {
     id: buildMarketId(day, location, `auction-${baseItem.name}`),
     name: baseItem.name,
@@ -1450,7 +1475,8 @@ const buildAuctionItem = (runSeed: string, day: number, location: string) => {
 
 const getAuctionStartingBid = (basePrice: number, runSeed: string, day: number, location: string) => {
   const rng = mulberry32(hashSeed(`${runSeed}-auction-start-${day}-${location}-${basePrice}`))
-  const pct = 0.55 + rng() * 0.18
+  // Lower/looser opening bids to enable true "steal" outcomes.
+  const pct = 0.42 + rng() * 0.26 // 42%–68%
   return Math.max(100, Math.round(basePrice * pct))
 }
 
@@ -1464,9 +1490,10 @@ const getAuctionIncrement = (basePrice: number) => {
 
 const simulateAuctionOpponentMax = (basePrice: number, runSeed: string, day: number, location: string) => {
   const rng = mulberry32(hashSeed(`${runSeed}-auction-opp-${day}-${location}-${basePrice}`))
-  // Opponent max usually lands around 75%–125% of base, with occasional spikes.
-  const spike = rng() < 0.12 ? 0.25 + rng() * 0.45 : 0
-  const pct = 0.75 + rng() * (0.5 + spike)
+  // Proxy-bid opponent is much more volatile than normal market pricing.
+  // Typical range: ~45%–165% of base. Sometimes the room goes wild: up to ~290%.
+  const spike = rng() < 0.22 ? 0.4 + rng() * 0.9 : 0
+  const pct = 0.45 + rng() * 1.2 + spike
   return Math.max(50, Math.round(basePrice * pct))
 }
 
@@ -1783,6 +1810,26 @@ const getMarketRecap = (market: MarketItem[]) => {
 const getRepoMessage = (day: number, location: string, runSeed: string) => {
   const rng = mulberry32(hashSeed(`${runSeed}-repo-${day}-${location}`))
   return repoMessages[Math.floor(rng() * repoMessages.length)]
+}
+
+const resolvePlayerAuction = (params: {
+  runSeed: string
+  day: number
+  location: string
+  item: OwnedItem
+}) => {
+  const { runSeed, day, location, item } = params
+  const rng = mulberry32(hashSeed(`${runSeed}-player-auction-${day}-${location}-${item.id}`))
+  // Casino-spicy distribution: can go low, can go wildly high.
+  const base = 0.35 + rng() * 1.4 // 35%–175%
+  const spike = rng() < 0.25 ? 0.4 + rng() * 1.6 : 0 // +40%–+200% (25% chance)
+  const multiplier = base + spike
+  const baseline = Math.max(30, Math.round(item.auctionBaselinePrice ?? item.basePrice))
+  const hammer = Math.max(50, Math.round(baseline * multiplier))
+  const premiumRate = item.auctionBuyerPremiumRate ?? PLAYER_AUCTION_BUYER_PREMIUM_RATE
+  const buyerPremium = Math.round(hammer * premiumRate)
+  const totalPaid = hammer + buyerPremium
+  return { hammer, buyerPremium, totalPaid }
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
@@ -2104,6 +2151,11 @@ const ASCII_ART = {
   collectorsQuiet: `  . . . crickets . . .`,
   scam: `  \\_( :/ )_/
   Listing vanishes.`,
+  auctionHammer: `   _..----.._
+ .'  HAMMER  '.
+ |  DOWN!     |
+ '._        _.'
+    '------'`,
   endRun: `  +========================+
   |      FRET WARS         |
   |      RUN COMPLETE      |
@@ -2157,6 +2209,8 @@ export default function FretWarsGame() {
   const [isTravelModalOpen, setIsTravelModalOpen] = useState(false)
   const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false)
   const [isSellModalOpen, setIsSellModalOpen] = useState(false)
+  const [playerAuctionItemId, setPlayerAuctionItemId] = useState<string | null>(null)
+  const [playerAuctionBaseline, setPlayerAuctionBaseline] = useState<number>(0)
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle")
   const [scorePostStatus, setScorePostStatus] = useState<
     | { state: "idle" }
@@ -2189,6 +2243,70 @@ export default function FretWarsGame() {
       ...prev,
       messages: [...prev.messages, newMessage],
     }))
+  }
+
+  const openPlayerAuction = (item: OwnedItem) => {
+    const baseline = getSellPrice(item, gameState.market, gameState.reputation)
+    setPlayerAuctionItemId(item.id)
+    setPlayerAuctionBaseline(baseline)
+  }
+
+  const closePlayerAuction = () => {
+    setPlayerAuctionItemId(null)
+    setPlayerAuctionBaseline(0)
+  }
+
+  const handleConfirmPlayerAuction = () => {
+    if (!playerAuctionItemId) return
+    setGameState((prev) => {
+      const item = prev.inventory.find((owned) => owned.id === playerAuctionItemId)
+      if (!item) return prev
+      if (item.rarity !== "legendary") {
+        return {
+          ...prev,
+          messages: [...prev.messages, createMessage("Only legendary items can be listed on StringTree right now.", "info")],
+        }
+      }
+      if (item.authStatus === "pending" || item.luthierStatus === "pending") {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage("Finish your pending work before listing this item.", "info"),
+          ],
+        }
+      }
+      if (item.auctionStatus === "listed") {
+        return {
+          ...prev,
+          messages: [...prev.messages, createMessage("That item is already listed on StringTree.", "info")],
+        }
+      }
+      const baseline = getSellPrice(item, prev.market, prev.reputation)
+      const resolveDay = prev.day + 1
+      const nextInventory = prev.inventory.map((owned) =>
+        owned.id === item.id
+          ? {
+              ...owned,
+              auctionStatus: "listed" as const,
+              auctionListedDay: prev.day,
+              auctionResolveDay: resolveDay,
+              auctionBuyerPremiumRate: PLAYER_AUCTION_BUYER_PREMIUM_RATE,
+              auctionBaselinePrice: baseline,
+            }
+          : owned
+      )
+      return {
+        ...prev,
+        inventory: nextInventory,
+        messages: [
+          ...prev.messages,
+          createMessage("StringTree auction is live. The room will decide tomorrow.", "event"),
+          createMessage(`Buyer premium: 5%. Resolves Day ${resolveDay}.`, "info"),
+        ],
+      }
+    })
+    closePlayerAuction()
   }
 
   useEffect(() => {
@@ -2281,6 +2399,7 @@ export default function FretWarsGame() {
           slots:
             item.slots ??
             (item.category === "Amp" ? 3 : item.category === "Guitar" ? 2 : 1),
+          auctionStatus: item.auctionStatus ?? "none",
           authStatus: item.authStatus ?? "none",
           authMultiplier: item.authMultiplier ?? 1,
           insured: item.insured ?? false,
@@ -2453,6 +2572,7 @@ export default function FretWarsGame() {
         purchasePrice: selectedItem.priceToday,
         heatValue: Math.round(selectedItem.hotRisk * 100),
         acquiredDay: gameState.day,
+        auctionStatus: "none",
         inspected: false,
         authStatus: "none",
         authMultiplier: 1,
@@ -2575,13 +2695,31 @@ export default function FretWarsGame() {
     extraMessages: TerminalMessage[] = []
   ): GameState => {
     if (prev.day >= prev.totalDays) {
+      const liquidationValue = prev.inventory.reduce(
+        (sum, item) => sum + getSellPrice(item, prev.market, prev.reputation),
+        0
+      )
+      const itemCount = prev.inventory.length
+      const liquidationMessages: TerminalMessage[] =
+        itemCount > 0
+          ? [
+              createMessage(
+                `Run complete liquidation: sold ${itemCount} item${itemCount === 1 ? "" : "s"} for $${liquidationValue.toLocaleString()}.`,
+                "success"
+              ),
+            ]
+          : [createMessage("Run complete liquidation: no gear left in your bag.", "info")]
       return {
         ...prev,
         isGameOver: true,
+        cash: prev.cash + liquidationValue,
+        inventory: [],
+        heatLevel: "Low",
         messages: [
           ...prev.messages,
           ...extraMessages,
           createMessage(ASCII_ART.endRun, "event", true),
+          ...liquidationMessages,
           createMessage("Final day reached. Game over!", "warning"),
         ],
       }
@@ -2595,9 +2733,15 @@ export default function FretWarsGame() {
     const cleanedFlipDays = prev.recentFlipDays.filter((day) => nextDay - day <= 5)
     const totalHeat = prev.inventory.reduce((sum, item) => sum + item.heatValue, 0)
     const hotItems = prev.inventory.filter((item) => item.heatValue >= 40)
+    const listedItems = prev.inventory.filter((item) => item.auctionStatus === "listed")
     const recentFlips = cleanedFlipDays.filter((day) => nextDay - day <= 3).length
     const repoRisk = clamp(
-      0.05 + totalHeat * 0.002 + hotItems.length * 0.05 + recentFlips * 0.06 - prev.reputation * 0.002,
+      0.05 +
+        totalHeat * 0.002 +
+        hotItems.length * 0.05 +
+        listedItems.length * 0.08 +
+        recentFlips * 0.06 -
+        prev.reputation * 0.002,
       0,
       0.75
     )
@@ -2605,9 +2749,13 @@ export default function FretWarsGame() {
     let nextCash = prev.cash
     let nextReputation = prev.reputation
     let nextCreditLine = prev.creditLine
+    let nextRecentFlipDays = cleanedFlipDays
+    let nextBestFlip = prev.bestFlip
+    let nextRarestSold = prev.rarestSold
     const repoMessages: TerminalMessage[] = []
     const authMessages: TerminalMessage[] = []
     const luthierMessages: TerminalMessage[] = []
+    const auctionMessages: TerminalMessage[] = []
     const jamMessages: TerminalMessage[] = []
     const creditMessages: TerminalMessage[] = []
     let pendingDuel: DuelState | null = null
@@ -2751,6 +2899,42 @@ export default function FretWarsGame() {
       }
     }
 
+    // Resolve any player-listed StringTree auctions (1-day delay).
+    const resolvingListings = nextInventory.filter(
+      (item) => item.auctionStatus === "listed" && item.auctionResolveDay && item.auctionResolveDay <= nextDay
+    )
+    if (resolvingListings.length > 0) {
+      auctionMessages.push(createMessage(ASCII_ART.auctionHammer, "event", true))
+      auctionMessages.push(createMessage("StringTree auction results roll in…", "event"))
+      for (const listed of resolvingListings) {
+        const { hammer, buyerPremium, totalPaid } = resolvePlayerAuction({
+          runSeed: prev.runSeed,
+          day: nextDay,
+          location: nextLocation,
+          item: listed,
+        })
+        // Sold (no reserves in v1).
+        nextInventory = nextInventory.filter((item) => item.id !== listed.id)
+        nextCash = nextCash + hammer
+        nextRecentFlipDays = [...nextRecentFlipDays, nextDay].slice(-6)
+        const profit = hammer - listed.purchasePrice
+        nextBestFlip =
+          profit > 0 && (!nextBestFlip || profit > nextBestFlip.profit)
+            ? { name: listed.name, profit }
+            : nextBestFlip
+        nextRarestSold =
+          !nextRarestSold || rarityRank[listed.rarity] > rarityRank[nextRarestSold.rarity]
+            ? { name: listed.name, rarity: listed.rarity }
+            : nextRarestSold
+        auctionMessages.push(
+          createMessage(
+            `SOLD: ${listed.name} hammers at $${hammer.toLocaleString()} (+$${buyerPremium.toLocaleString()} buyer fee) = $${totalPaid.toLocaleString()}.`,
+            "success"
+          )
+        )
+      }
+    }
+
     const jamChance = 0.18
     if (Math.random() < jamChance) {
       const challenger = randomFrom(duelChallengers)
@@ -2846,10 +3030,12 @@ export default function FretWarsGame() {
       cash: nextCash,
       reputation: nextReputation,
       inventory: nextInventory,
+      bestFlip: nextBestFlip,
+      rarestSold: nextRarestSold,
       creditLine: nextCreditLine,
       heatLevel: computeHeatLevel(nextInventory),
       inspectedMarketIds: [],
-      recentFlipDays: cleanedFlipDays,
+      recentFlipDays: nextRecentFlipDays,
       pendingDuel,
       pendingEncounter,
       messages: [
@@ -2868,6 +3054,7 @@ export default function FretWarsGame() {
         ...creditMessages,
         ...authMessages,
         ...luthierMessages,
+        ...auctionMessages,
         ...jamMessages,
         ...repoMessages,
       ],
@@ -3284,6 +3471,7 @@ export default function FretWarsGame() {
 
   const handleSell = (item: OwnedItem) => {
     const canSellNow =
+      item.auctionStatus !== "listed" &&
       item.authStatus !== "pending" &&
       item.luthierStatus !== "pending" &&
       (item.acquiredDay < gameState.day || Boolean(item.sameDaySellOk))
@@ -3301,6 +3489,27 @@ export default function FretWarsGame() {
       })
     }
     setGameState((prev) => {
+      if (item.auctionStatus === "listed") {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage(`${item.name} is at auction on StringTree. Check back tomorrow.`, "info"),
+          ],
+        }
+      }
+      if (item.saleBlockedUntilDay && prev.day < item.saleBlockedUntilDay) {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage(
+              `${item.name} is cooling off after a buyer walked. Try again tomorrow.`,
+              "info"
+            ),
+          ],
+        }
+      }
       if (item.authStatus === "pending") {
         return {
           ...prev,
@@ -3359,6 +3568,15 @@ export default function FretWarsGame() {
 
   const handleAuthenticate = (item: OwnedItem) => {
     setGameState((prev) => {
+      if (item.auctionStatus === "listed") {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage(`${item.name} is at auction on StringTree. You can’t authenticate it mid-auction.`, "info"),
+          ],
+        }
+      }
       const cost = getAuthCost(item)
       if (item.authStatus !== "none") {
         return {
@@ -3409,6 +3627,15 @@ export default function FretWarsGame() {
 
   const handleLuthier = (item: OwnedItem, target: Condition) => {
     setGameState((prev) => {
+      if (item.auctionStatus === "listed") {
+        return {
+          ...prev,
+          messages: [
+            ...prev.messages,
+            createMessage(`${item.name} is at auction on StringTree. You can’t send it to the luthier mid-auction.`, "info"),
+          ],
+        }
+      }
       if (!prev.tools.luthierBench) {
         return {
           ...prev,
@@ -3674,12 +3901,23 @@ export default function FretWarsGame() {
   }
 
   const handleEncounterDecline = () => {
-    setGameState((prev) => ({
-      ...prev,
-      tradeDeclines: prev.tradeDeclines + 1,
-      pendingEncounter: null,
-      messages: [...prev.messages, createMessage("You pass on the lead.", "info")],
-    }))
+    setGameState((prev) => {
+      const encounter = prev.pendingEncounter
+      if (!encounter) return prev
+
+      // If an auction already resolved, just close the modal without "passing" messaging.
+      if (encounter.type === "auction" && encounter.resolved) {
+        return { ...prev, pendingEncounter: null }
+      }
+
+      const tradeDeclinesBump = encounter.type === "tradeOffer" ? 1 : 0
+      return {
+        ...prev,
+        tradeDeclines: prev.tradeDeclines + tradeDeclinesBump,
+        pendingEncounter: null,
+        messages: [...prev.messages, createMessage("You pass on the lead.", "info")],
+      }
+    })
   }
 
   const handleBulkLotPurchase = () => {
@@ -3824,6 +4062,7 @@ export default function FretWarsGame() {
         heatValue: Math.round(item.hotRisk * 100),
         acquiredDay: prev.day,
         sameDaySellOk: true,
+        auctionStatus: "none",
         inspected: false,
         authStatus: "none",
         authMultiplier: 1,
@@ -3845,10 +4084,27 @@ export default function FretWarsGame() {
   }
 
   const handleMysteriousProof = () => {
-    setGameState((prev) => {
-      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "mysteriousListing") return prev
-      const roll = Math.random()
-      if (roll < 0.35) {
+    const snapshot = gameStateRef.current
+    if (!snapshot.pendingEncounter || snapshot.pendingEncounter.type !== "mysteriousListing") return
+    if (snapshot.pendingEncounter.proofChecked) {
+      toast({
+        title: "Proof already checked",
+        description: "You already asked for proof on this listing.",
+        duration: 2200,
+      })
+      return
+    }
+
+    const roll = Math.random()
+    if (roll < 0.35) {
+      toast({
+        title: "Listing vanished",
+        description: "They pulled it as soon as you asked for proof.",
+        variant: "destructive",
+        duration: 2800,
+      })
+      setGameState((prev) => {
+        if (!prev.pendingEncounter || prev.pendingEncounter.type !== "mysteriousListing") return prev
         return {
           ...prev,
           pendingEncounter: null,
@@ -3857,14 +4113,26 @@ export default function FretWarsGame() {
             createMessage("You ask for proof. The listing disappears immediately.", "warning"),
           ],
         }
-      }
+      })
+      return
+    }
+
+    const before = snapshot.pendingEncounter.item.scamRisk
+    const after = clamp(before - 0.25, 0.05, 0.9)
+    toast({
+      title: "Proof checks out",
+      description: `Scam risk reduced.`,
+      duration: 2400,
+    })
+    setGameState((prev) => {
+      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "mysteriousListing") return prev
       return {
         ...prev,
         pendingEncounter: {
           ...prev.pendingEncounter,
           item: {
             ...prev.pendingEncounter.item,
-            scamRisk: clamp(prev.pendingEncounter.item.scamRisk - 0.25, 0.05, 0.9),
+            scamRisk: after,
           },
           proofChecked: true,
         },
@@ -3898,13 +4166,20 @@ export default function FretWarsGame() {
   const handleRepairRefuse = () => {
     setGameState((prev) => {
       if (!prev.pendingEncounter || prev.pendingEncounter.type !== "repairScare") return prev
+      const { item } = prev.pendingEncounter
+      const blockedUntil = prev.day + 1
+      const nextInventory = prev.inventory.map((owned) =>
+        owned.id === item.id ? { ...owned, saleBlockedUntilDay: blockedUntil } : owned
+      )
       return {
         ...prev,
         reputation: clamp(prev.reputation - 1, 0, 100),
+        inventory: nextInventory,
         pendingEncounter: null,
         messages: [
           ...prev.messages,
           createMessage("You hold firm. The buyer walks.", "warning"),
+          createMessage("That item won’t move today. Try again tomorrow.", "info"),
         ],
       }
     })
@@ -3920,7 +4195,10 @@ export default function FretWarsGame() {
       return {
         next: {
           ...state,
-          pendingEncounter: null,
+          pendingEncounter: {
+            ...state.pendingEncounter,
+            resolved: { outcome: "blocked", maxBid: Math.max(0, Math.min(state.cash, Math.floor(maxBid))) },
+          },
           messages: [
             ...state.messages,
             createMessage(
@@ -3943,7 +4221,10 @@ export default function FretWarsGame() {
       return {
         next: {
           ...state,
-          pendingEncounter: null,
+          pendingEncounter: {
+            ...state.pendingEncounter,
+            resolved: { outcome: "no_bid", maxBid: clampedBid, finalPrice: startingBid },
+          },
           messages: [
             ...state.messages,
             createMessage(
@@ -3967,7 +4248,10 @@ export default function FretWarsGame() {
       return {
         next: {
           ...state,
-          pendingEncounter: null,
+          pendingEncounter: {
+            ...state.pendingEncounter,
+            resolved: { outcome: "passed", maxBid: clampedBid, finalPrice: startingBid },
+          },
           messages: [
             ...state.messages,
             createMessage(
@@ -3992,18 +4276,21 @@ export default function FretWarsGame() {
       return {
         next: {
           ...state,
-          pendingEncounter: null,
+          pendingEncounter: {
+            ...state.pendingEncounter,
+            resolved: { outcome: "outbid", maxBid: clampedBid, finalPrice },
+          },
           messages: [
             ...state.messages,
             createMessage(
-              `Bidding climbs past $${clampedBid.toLocaleString()}… SOLD (not to you).`,
+              `Bidding climbs past $${clampedBid.toLocaleString()}… SOLD for $${finalPrice.toLocaleString()} (not to you).`,
               "warning"
             ),
           ],
         },
         toastPayload: {
           title: "Outbid",
-          description: `Your max: $${clampedBid.toLocaleString()}`,
+          description: `Sold for $${finalPrice.toLocaleString()} • Your max: $${clampedBid.toLocaleString()}`,
           variant: "destructive",
           duration: 2600,
         },
@@ -4016,7 +4303,10 @@ export default function FretWarsGame() {
       return {
         next: {
           ...state,
-          pendingEncounter: null,
+          pendingEncounter: {
+            ...state.pendingEncounter,
+            resolved: { outcome: "forfeited", maxBid: clampedBid, finalPrice, premium, totalCost },
+          },
           messages: [
             ...state.messages,
             createMessage(
@@ -4039,7 +4329,10 @@ export default function FretWarsGame() {
       return {
         next: {
           ...state,
-          pendingEncounter: null,
+          pendingEncounter: {
+            ...state.pendingEncounter,
+            resolved: { outcome: "no_space", maxBid: clampedBid, finalPrice, premium, totalCost },
+          },
           messages: [
             ...state.messages,
             createMessage(
@@ -4062,6 +4355,7 @@ export default function FretWarsGame() {
       purchasePrice: totalCost,
       heatValue: Math.round(item.hotRisk * 100),
       acquiredDay: state.day,
+      auctionStatus: "none",
       inspected: false,
       authStatus: "none",
       authMultiplier: 1,
@@ -4075,7 +4369,10 @@ export default function FretWarsGame() {
         ...state,
         cash: state.cash - totalCost,
         inventory: [...state.inventory, owned],
-        pendingEncounter: null,
+        pendingEncounter: {
+          ...state.pendingEncounter,
+          resolved: { outcome: "won", maxBid: clampedBid, finalPrice, premium, totalCost },
+        },
         messages: [
           ...state.messages,
           createMessage(`Bidding climbs… SOLD to you for $${finalPrice.toLocaleString()}.`, "success"),
@@ -4467,6 +4764,7 @@ export default function FretWarsGame() {
         onSell={handleSell}
         onAuthenticate={handleAuthenticate}
         onLuthier={handleLuthier}
+        onListAuction={openPlayerAuction}
         onBuyTool={handleBuyTool}
         onBuyPerformanceItem={handleBuyPerformanceItem}
       />
@@ -4493,6 +4791,16 @@ export default function FretWarsGame() {
             ],
           }))
         }
+      />
+
+      <PlayerAuctionModal
+        isOpen={Boolean(playerAuctionItemId)}
+        item={playerAuctionItemId ? gameState.inventory.find((owned) => owned.id === playerAuctionItemId) ?? null : null}
+        baselinePrice={playerAuctionBaseline}
+        buyerPremiumRate={PLAYER_AUCTION_BUYER_PREMIUM_RATE}
+        resolveDay={gameState.day + 1}
+        onClose={closePlayerAuction}
+        onConfirm={handleConfirmPlayerAuction}
       />
 
       {gameState.pendingDuel && (

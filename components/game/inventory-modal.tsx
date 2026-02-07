@@ -51,6 +51,7 @@ interface InventoryModalProps {
   onSell: (item: OwnedItem) => void
   onAuthenticate: (item: OwnedItem) => void
   onLuthier: (item: OwnedItem, target: "Player" | "Mint") => void
+  onListAuction: (item: OwnedItem) => void
   onBuyTool: (toolKey: "serialScanner" | "priceGuide" | "insurancePlan" | "luthierBench") => void
   onBuyPerformanceItem: (item: { id: string; name: string; description: string; cost: number }) => void
 }
@@ -113,6 +114,7 @@ export function InventoryModal({
   onSell,
   onAuthenticate,
   onLuthier,
+  onListAuction,
   onBuyTool,
   onBuyPerformanceItem,
 }: InventoryModalProps) {
@@ -194,7 +196,7 @@ export function InventoryModal({
             </Button>
           </div>
           <div className="mt-2 text-xs text-muted-foreground">
-            Serial Scanner cuts repo/scam risk. Price Guide flags deals. Insurance covers losses. Luthier upgrades condition.
+            Serial Scanner cuts repo/scam risk. Price Guide flags deals. Insurance covers losses. Luthier upgrades condition (higher resale value).
           </div>
           {/* Favor system removed (Option C). */}
         </div>
@@ -386,6 +388,8 @@ export function InventoryModal({
                 const heatLabel = getHeatLabel(item.heatValue)
                 const authLabel = getAuthLabel(item)
                 const luthierLabel = getLuthierLabel(item)
+                const isSaleBlocked = Boolean(item.saleBlockedUntilDay && day < item.saleBlockedUntilDay)
+                const isListed = item.auctionStatus === "listed"
                 return (
                   <div
                     key={item.id}
@@ -396,13 +400,21 @@ export function InventoryModal({
                         <div className="text-sm font-semibold text-foreground">{item.name}</div>
                         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                           <span>{item.category}</span>
-                          <span>{item.condition}</span>
+                          <span>
+                            Condition: <span className="text-foreground">{item.condition}</span>
+                          </span>
                           <span>{item.rarity}</span>
                           <span>Slots: {item.slots}</span>
                           <span>Provenance: {heatLabel}</span>
                           <span>{authLabel}</span>
                           {luthierLabel && <span>{luthierLabel}</span>}
                           {item.insured && <span>Insured</span>}
+                          {isSaleBlocked && <span>Cooling off (tomorrow)</span>}
+                          {isListed && (
+                            <span>
+                              Auction on StringTree (Day {item.auctionResolveDay ?? "?"})
+                            </span>
+                          )}
                           <span>Paid ${item.purchasePrice.toLocaleString()}</span>
                         </div>
                       </div>
@@ -415,7 +427,12 @@ export function InventoryModal({
                       <Button
                         size="sm"
                         onClick={() => onSell(item)}
-                        disabled={item.authStatus === "pending" || item.luthierStatus === "pending"}
+                        disabled={
+                          item.authStatus === "pending" ||
+                          item.luthierStatus === "pending" ||
+                          isSaleBlocked ||
+                          isListed
+                        }
                         className="min-w-[96px]"
                       >
                         Sell
@@ -424,7 +441,7 @@ export function InventoryModal({
                         size="sm"
                         variant="outline"
                         onClick={() => onAuthenticate(item)}
-                        disabled={item.authStatus !== "none" || cash < authCost}
+                        disabled={item.authStatus !== "none" || cash < authCost || isListed}
                         className={cn(
                           "min-w-[140px]",
                           item.authStatus !== "none" && "text-muted-foreground"
@@ -439,8 +456,9 @@ export function InventoryModal({
                               size="sm"
                               variant="ghost"
                               onClick={() => onLuthier(item, "Player")}
+                              disabled={isListed}
                             >
-                              Luthier: Player (${getLuthierCost(item, "Player")})
+                              Luthier: Project → Player (${getLuthierCost(item, "Player")})
                             </Button>
                           )}
                           {item.condition === "Player" && (
@@ -448,11 +466,22 @@ export function InventoryModal({
                               size="sm"
                               variant="ghost"
                               onClick={() => onLuthier(item, "Mint")}
+                              disabled={isListed}
                             >
-                              Luthier: Mint (${getLuthierCost(item, "Mint")})
+                              Luthier: Player → Mint (${getLuthierCost(item, "Mint")})
                             </Button>
                           )}
                         </>
+                      )}
+                      {item.rarity === "legendary" && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => onListAuction(item)}
+                          disabled={isListed || item.authStatus === "pending" || item.luthierStatus === "pending"}
+                        >
+                          {isListed ? "Auction Live" : "Auction on StringTree"}
+                        </Button>
                       )}
                     </div>
                   </div>

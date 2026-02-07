@@ -33,11 +33,12 @@ export function EncounterModal({
   onRepairRefuse,
 }: EncounterModalProps) {
   const [maxBidInput, setMaxBidInput] = useState("")
-  const [auctionPhase, setAuctionPhase] = useState<"entry" | "resolving">("entry")
+  const [auctionPhase, setAuctionPhase] = useState<"entry" | "resolving" | "result">("entry")
   const [lockedBid, setLockedBid] = useState<number | null>(null)
   const [liveBid, setLiveBid] = useState<number | null>(null)
   const auctionIntervalRef = useRef<number | null>(null)
   const auctionTimeoutRef = useRef<number | null>(null)
+  const auctionAutoCloseRef = useRef<number | null>(null)
 
   const formatMoney = (value: number) => `$${value.toLocaleString()}`
 
@@ -69,22 +70,38 @@ export function EncounterModal({
       window.clearTimeout(auctionTimeoutRef.current)
       auctionTimeoutRef.current = null
     }
+    if (auctionAutoCloseRef.current) {
+      window.clearTimeout(auctionAutoCloseRef.current)
+      auctionAutoCloseRef.current = null
+    }
   }, [encounter])
 
   useEffect(() => {
     return () => {
       if (auctionIntervalRef.current) window.clearInterval(auctionIntervalRef.current)
       if (auctionTimeoutRef.current) window.clearTimeout(auctionTimeoutRef.current)
+      if (auctionAutoCloseRef.current) window.clearTimeout(auctionAutoCloseRef.current)
     }
   }, [])
 
+  useEffect(() => {
+    if (encounter.type !== "auction") return
+    if (!encounter.resolved) return
+    setAuctionPhase("result")
+    if (auctionAutoCloseRef.current) window.clearTimeout(auctionAutoCloseRef.current)
+    auctionAutoCloseRef.current = window.setTimeout(() => {
+      onClose()
+    }, 1400)
+  }, [encounter, onClose])
+
   const placeMaxBid = () => {
     if (encounter.type !== "auction") return
+    if (encounter.resolved) return
     const bid = clampBidToCash(parseBid(maxBidInput))
     setMaxBidInput(String(bid))
 
     // If the bid isn't valid, resolve immediately (no animation needed).
-    if (bid < encounter.startingBid) {
+    if (bid < 1) {
       onAuctionResolve(bid)
       return
     }
@@ -180,6 +197,14 @@ export function EncounterModal({
             <div className="rounded-md border border-border bg-secondary/30 p-3 text-xs">
               {encounter.item.name} · ${encounter.item.priceToday}
             </div>
+            {encounter.proofChecked && (
+              <div className="rounded-md border border-border bg-background/50 p-3 text-xs">
+                <div className="font-semibold text-foreground">Proof checked</div>
+                <div className="mt-1 text-muted-foreground">
+                  Scam risk reduced. The listing feels safer — but it’s still giving you a funny feeling.
+                </div>
+              </div>
+            )}
             <div className="flex gap-2">
               <Button onClick={onMysteryBuy}>Buy Anyway</Button>
               <Button variant="ghost" onClick={onMysteryProof}>
@@ -192,7 +217,9 @@ export function EncounterModal({
         {encounter.type === "auction" && (
           <div className="space-y-3 text-sm text-muted-foreground">
             <p>
-              {auctionPhase === "resolving"
+              {auctionPhase === "result"
+                ? "Hammer down."
+                : auctionPhase === "resolving"
                 ? "Max bid locked. Proxy bidding is in motion…"
                 : "Legendary lot. Enter your max bid and proxy bidding resolves instantly."}
             </p>
@@ -214,7 +241,52 @@ export function EncounterModal({
               </div>
             </div>
 
-            {auctionPhase === "entry" ? (
+            {encounter.resolved ? (
+              <div className="rounded-md border border-border bg-background/50 p-3">
+                <div className="text-[11px] text-muted-foreground">Result</div>
+                <div className="mt-1 text-base font-semibold text-foreground">
+                  {encounter.resolved.outcome === "won"
+                    ? "SOLD to you"
+                    : encounter.resolved.outcome === "outbid"
+                      ? "Outbid"
+                      : encounter.resolved.outcome === "passed"
+                        ? "Passed"
+                        : encounter.resolved.outcome === "no_bid"
+                          ? "No bid"
+                          : encounter.resolved.outcome === "forfeited"
+                            ? "Won, but forfeited"
+                            : encounter.resolved.outcome === "no_space"
+                              ? "Won, but no space"
+                              : "Blocked"}
+                </div>
+                {encounter.resolved.outcome === "outbid" &&
+                  typeof encounter.resolved.finalPrice === "number" && (
+                    <div className="mt-1 text-lg font-semibold tracking-tight text-foreground">
+                      Sold for {formatMoney(encounter.resolved.finalPrice)}
+                    </div>
+                  )}
+                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  <div>
+                    Your max: <span className="text-foreground">{formatMoney(encounter.resolved.maxBid)}</span>
+                  </div>
+                  {typeof encounter.resolved.finalPrice === "number" && (
+                    <div>
+                      Final price: <span className="text-foreground">{formatMoney(encounter.resolved.finalPrice)}</span>
+                    </div>
+                  )}
+                  {typeof encounter.resolved.premium === "number" && (
+                    <div>
+                      Buyer premium: <span className="text-foreground">{formatMoney(encounter.resolved.premium)}</span>
+                    </div>
+                  )}
+                  {typeof encounter.resolved.totalCost === "number" && (
+                    <div>
+                      Total: <span className="text-foreground">{formatMoney(encounter.resolved.totalCost)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : auctionPhase === "entry" ? (
               <div className="space-y-2">
                 <div className="text-xs text-muted-foreground">Your max bid</div>
                 <input
@@ -284,12 +356,17 @@ export function EncounterModal({
             )}
 
             <div className="flex gap-2">
-              <Button onClick={placeMaxBid} disabled={auctionPhase === "resolving"}>
-                {auctionPhase === "resolving" ? "Bidding…" : "Place Max Bid"}
+              <Button
+                onClick={encounter.resolved ? onClose : placeMaxBid}
+                disabled={auctionPhase === "resolving"}
+              >
+                {encounter.resolved ? "Continue" : auctionPhase === "resolving" ? "Bidding…" : "Place Max Bid"}
               </Button>
-              <Button variant="ghost" onClick={onClose} disabled={auctionPhase === "resolving"}>
-                Skip
-              </Button>
+              {!encounter.resolved && (
+                <Button variant="ghost" onClick={onClose} disabled={auctionPhase === "resolving"}>
+                  Skip
+                </Button>
+              )}
             </div>
           </div>
         )}

@@ -15,8 +15,9 @@ interface SellModalProps {
 }
 
 export function SellModal({ isOpen, onClose, day, items, getSellPrice, onSell, onRepairScare }: SellModalProps) {
-  const saleableItems = items.filter(
+  const visibleItems = items.filter(
     (item) =>
+      item.auctionStatus !== "listed" &&
       item.authStatus !== "pending" &&
       item.luthierStatus !== "pending" &&
       // Can't flip the same day you bought it.
@@ -30,13 +31,14 @@ export function SellModal({ isOpen, onClose, day, items, getSellPrice, onSell, o
           <DialogTitle className="text-lg text-foreground">Sell Gear</DialogTitle>
         </DialogHeader>
 
-        {saleableItems.length === 0 ? (
+        {visibleItems.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nothing saleable right now. Gear bought today (except flash listings), in authentication, or at the luthier can’t be sold yet.
+            Nothing saleable right now. Gear bought today (except flash listings), at auction on StringTree, in authentication, or at the luthier can’t be sold yet.
           </p>
         ) : (
           <div className="space-y-3">
-            {saleableItems.map((item) => {
+            {visibleItems.map((item) => {
+              const isBlocked = Boolean(item.saleBlockedUntilDay && day < item.saleBlockedUntilDay)
               const price = getSellPrice(item)
               const delta = price - item.purchasePrice
               const deltaLabel = delta >= 0 ? `+${delta}` : `${delta}`
@@ -61,10 +63,17 @@ export function SellModal({ isOpen, onClose, day, items, getSellPrice, onSell, o
                   <div className="mt-1 text-xs text-muted-foreground">
                     {delta >= 0 ? "Gain" : "Loss"} ${Math.abs(delta).toLocaleString()} ({deltaLabel})
                   </div>
+                  {isBlocked && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Cooling off until tomorrow.
+                    </div>
+                  )}
                   <Button
                     size="sm"
                     className="mt-3"
+                    disabled={isBlocked}
                     onClick={() => {
+                      if (isBlocked) return
                       if (onRepairScare && Math.random() < scareChance) {
                         const discount = Math.max(25, Math.round(price * 0.85))
                         onRepairScare(item, price, discount)
