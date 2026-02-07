@@ -13,6 +13,7 @@ import { SellModal } from "@/components/game/sell-modal"
 import { DuelModal } from "@/components/game/duel-modal"
 import { EncounterModal } from "@/components/game/encounter-modal"
 import { toast } from "@/hooks/use-toast"
+import { clearRunContext, setRunContext, track } from "@/lib/analytics"
 
 export type HeatLevel = "Low" | "Medium" | "High"
 export type Rarity = "common" | "uncommon" | "rare" | "legendary"
@@ -1968,7 +1969,7 @@ const ASCII_ART = {
   +========================+`,
 }
 
-const createInitialGameState = (runSeed: string, totalDays = 30): GameState => {
+const createInitialGameState = (runSeed: string, totalDays = 21): GameState => {
   const intro = pickIntroBundle(runSeed, 1, "Downtown Music Row")
   const baseMarket = generateMarket(1, "Downtown Music Row", runSeed)
   return {
@@ -2019,7 +2020,11 @@ export default function FretWarsGame() {
   const [showStartMenu, setShowStartMenu] = useState(true)
   const [hasSavedGame, setHasSavedGame] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
-  const [runLength, setRunLength] = useState(30)
+  const [runLength, setRunLength] = useState(21)
+  const gameStateRef = useRef<GameState>(gameState)
+  const trackedRunCompleteRef = useRef<string | null>(null)
+  const trackedEncounterKeyRef = useRef<string | null>(null)
+  const trackedDuelKeyRef = useRef<string | null>(null)
   const terminalRef = useRef<HTMLDivElement>(null)
   const didHydrateRef = useRef(false)
   const autoScrollRef = useRef(true)
@@ -2036,6 +2041,79 @@ export default function FretWarsGame() {
   }
 
   useEffect(() => {
+    gameStateRef.current = gameState
+  }, [gameState])
+
+  useEffect(() => {
+    setRunContext({ runSeed: gameState.runSeed, totalDays: gameState.totalDays })
+    return () => clearRunContext()
+  }, [gameState.runSeed, gameState.totalDays])
+
+  useEffect(() => {
+    if (!gameState.isGameOver) return
+    if (trackedRunCompleteRef.current === gameState.runSeed) return
+    trackedRunCompleteRef.current = gameState.runSeed
+    const score = calculateScore(gameState.cash, gameState.inventory, gameState.market, gameState.reputation)
+    track("run_complete", {
+      runSeed: gameState.runSeed,
+      day: gameState.day,
+      totalDays: gameState.totalDays,
+      score,
+      cash: gameState.cash,
+      reputation: gameState.reputation,
+      inventorySlotsUsed: computeSlotsUsed(gameState.inventory),
+      inventoryCapacity: gameState.inventoryCapacity,
+    })
+  }, [
+    gameState.isGameOver,
+    gameState.runSeed,
+    gameState.day,
+    gameState.totalDays,
+    gameState.cash,
+    gameState.reputation,
+    gameState.inventory,
+    gameState.inventoryCapacity,
+    gameState.market,
+  ])
+
+  useEffect(() => {
+    const encounter = gameState.pendingEncounter
+    if (!encounter) return
+    const key =
+      encounter.type === "auction"
+        ? `auction-${gameState.day}-${gameState.location}-${encounter.item.id}`
+        : `${encounter.type}-${gameState.day}-${gameState.location}`
+    if (trackedEncounterKeyRef.current === key) return
+    trackedEncounterKeyRef.current = key
+    track("encounter_open", {
+      runSeed: gameState.runSeed,
+      type: encounter.type,
+      day: gameState.day,
+      location: gameState.location,
+      ...(encounter.type === "auction"
+        ? { itemCategory: encounter.item.category, rarity: encounter.item.rarity, startingBid: encounter.startingBid }
+        : {}),
+    })
+  }, [gameState.pendingEncounter, gameState.day, gameState.location, gameState.runSeed])
+
+  useEffect(() => {
+    const duel = gameState.pendingDuel
+    if (!duel) return
+    const key = `duel-${gameState.day}-${gameState.location}-${duel.challengerId}-${duel.round}`
+    if (trackedDuelKeyRef.current === key) return
+    trackedDuelKeyRef.current = key
+    if (duel.round === 1) {
+      track("duel_start", {
+        runSeed: gameState.runSeed,
+        day: gameState.day,
+        location: gameState.location,
+        challengerId: duel.challengerId,
+        totalRounds: duel.totalRounds,
+      })
+    }
+  }, [gameState.pendingDuel, gameState.day, gameState.location, gameState.runSeed])
+
+  useEffect(() => {
     const savedState = localStorage.getItem(STORAGE_KEY)
     if (savedState) {
       setHasSavedGame(true)
@@ -2043,7 +2121,7 @@ export default function FretWarsGame() {
         const parsed = JSON.parse(savedState) as Partial<GameState>
         const fallback = createInitialGameState("seed")
         const merged = { ...fallback, ...parsed }
-        setRunLength(typeof merged.totalDays === "number" ? merged.totalDays : 30)
+        setRunLength(typeof merged.totalDays === "number" ? merged.totalDays : 21)
         const inferredBagTier = (parsed.bagTier ?? inferBagTier(merged.inventoryCapacity ?? fallback.inventoryCapacity)) as BagTier
         const normalizedInventory = (parsed.inventory ?? fallback.inventory).map((item) => ({
           ...item,
@@ -2123,15 +2201,19 @@ export default function FretWarsGame() {
   const handleAction = (action: string) => {
     switch (action) {
       case "travel":
+        track("action", { runSeed: gameState.runSeed, type: "travel", day: gameState.day, location: gameState.location })
         setIsTravelModalOpen(true)
         break
       case "gigbag":
+        track("action", { runSeed: gameState.runSeed, type: "gigbag", day: gameState.day, location: gameState.location })
         setIsInventoryModalOpen(true)
         break
       case "sell":
+        track("action", { runSeed: gameState.runSeed, type: "sell", day: gameState.day, location: gameState.location })
         setIsSellModalOpen(true)
         break
       case "endday":
+        track("end_day", { runSeed: gameState.runSeed, day: gameState.day, location: gameState.location })
         setGameState((prev) =>
           advanceDay(prev, prev.location, [
             createMessage("You crash in town and wait for tomorrow's listings.", "info"),
@@ -2145,6 +2227,15 @@ export default function FretWarsGame() {
     setSelectedItem(item)
     setIsModalOpen(true)
     setInsuranceSelected(false)
+    track("market_item_open", {
+      runSeed: gameState.runSeed,
+      day: gameState.day,
+      location: gameState.location,
+      itemCategory: item.category,
+      rarity: item.rarity,
+      priceToday: item.priceToday,
+      basePrice: item.basePrice,
+    })
   }
 
   const handleBuy = () => {
@@ -2175,6 +2266,16 @@ export default function FretWarsGame() {
       )
       if (Math.random() < effectiveScamRisk) {
         const refund = insuranceSelected ? Math.round(selectedItem.priceToday * 0.6) : 0
+        track("buy_scammed", {
+          runSeed: gameState.runSeed,
+          day: gameState.day,
+          location: gameState.location,
+          itemCategory: selectedItem.category,
+          rarity: selectedItem.rarity,
+          priceToday: selectedItem.priceToday,
+          insured: insuranceSelected,
+          refund,
+        })
         setGameState((prev) => ({
           ...prev,
           cash: Math.max(0, prev.cash - totalCost + refund),
@@ -2216,6 +2317,16 @@ export default function FretWarsGame() {
         market: prev.market.filter((item) => item.id !== selectedItem.id),
         inspectedMarketIds: prev.inspectedMarketIds.filter((id) => id !== selectedItem.id),
       }))
+      track("buy_success", {
+        runSeed: gameState.runSeed,
+        day: gameState.day,
+        location: gameState.location,
+        itemCategory: selectedItem.category,
+        rarity: selectedItem.rarity,
+        priceToday: selectedItem.priceToday,
+        insured: insuranceSelected,
+        insuranceCost,
+      })
       addMessage(
         insuranceSelected
           ? `Purchased ${selectedItem.name} for $${selectedItem.priceToday} + $${insuranceCost} insurance.`
@@ -2655,6 +2766,14 @@ export default function FretWarsGame() {
   }
 
   const handleTravel = (location: Location) => {
+    track("travel", {
+      runSeed: gameState.runSeed,
+      from: gameState.location,
+      to: location.name,
+      day: gameState.day,
+      riskLevel: location.riskLevel,
+      travelTimeHours: location.travelTime,
+    })
     setGameState((prev) => {
       const theftMessages: TerminalMessage[] = []
       let travelInventory = prev.inventory
@@ -2752,6 +2871,17 @@ export default function FretWarsGame() {
     const newSeed =
       typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Date.now().toString()
     const fresh = createInitialGameState(newSeed, runLength)
+    trackedRunCompleteRef.current = null
+    trackedEncounterKeyRef.current = null
+    trackedDuelKeyRef.current = null
+    track("run_start", {
+      runSeed: fresh.runSeed,
+      totalDays: fresh.totalDays,
+      cash: fresh.cash,
+      reputation: fresh.reputation,
+      location: fresh.location,
+      source: "new_game",
+    })
     setGameState(fresh)
     setShareStatus("idle")
     localStorage.removeItem(STORAGE_KEY)
@@ -2764,6 +2894,17 @@ export default function FretWarsGame() {
   }
 
   const resolveDuel = (option: DuelOption, accuracy = 0.5) => {
+    track("duel_choice", {
+      runSeed: gameState.runSeed,
+      day: gameState.day,
+      location: gameState.location,
+      challengerId: gameState.pendingDuel?.challengerId,
+      round: gameState.pendingDuel?.round,
+      totalRounds: gameState.pendingDuel?.totalRounds,
+      optionId: option.id,
+      accuracy,
+      usedBoost: Boolean(gameState.pendingDuel?.selectedBoostId),
+    })
     setGameState((prev) => {
       if (!prev.pendingDuel) return prev
       const challenger = duelChallengers.find((item) => item.id === prev.pendingDuel?.challengerId)
@@ -2967,10 +3108,28 @@ export default function FretWarsGame() {
   }
 
   const handleContinue = () => {
+    track("menu_continue", { runSeed: gameState.runSeed, day: gameState.day, location: gameState.location })
     setShowStartMenu(false)
   }
 
   const handleSell = (item: OwnedItem) => {
+    const canSellNow =
+      item.authStatus !== "pending" &&
+      item.luthierStatus !== "pending" &&
+      (item.acquiredDay < gameState.day || Boolean(item.sameDaySellOk))
+    if (canSellNow) {
+      const sellPricePreview = getSellPrice(item, gameState.market, gameState.reputation)
+      track("sell_success", {
+        runSeed: gameState.runSeed,
+        day: gameState.day,
+        location: gameState.location,
+        itemCategory: item.category,
+        rarity: item.rarity,
+        sellPrice: sellPricePreview,
+        purchasePrice: item.purchasePrice,
+        profit: sellPricePreview - item.purchasePrice,
+      })
+    }
     setGameState((prev) => {
       if (item.authStatus === "pending") {
         return {
@@ -3581,117 +3740,233 @@ export default function FretWarsGame() {
     })
   }
 
-  const handleAuctionResolve = (maxBid: number) => {
-    setGameState((prev) => {
-      if (!prev.pendingEncounter || prev.pendingEncounter.type !== "auction") return prev
-      const { item, startingBid, buyerPremiumRate, minReputation } = prev.pendingEncounter
+  const resolveAuction = (state: GameState, maxBid: number) => {
+    if (!state.pendingEncounter || state.pendingEncounter.type !== "auction") {
+      return { next: state, toastPayload: null as null | Parameters<typeof toast>[0] }
+    }
+    const { item, startingBid, buyerPremiumRate, minReputation } = state.pendingEncounter
 
-      if (prev.reputation < minReputation) {
-        return {
-          ...prev,
+    if (state.reputation < minReputation) {
+      return {
+        next: {
+          ...state,
           pendingEncounter: null,
           messages: [
-            ...prev.messages,
+            ...state.messages,
             createMessage(
               "StringTree Live Auction is invite-only tonight. Your rep isn't high enough.",
               "warning"
             ),
           ],
-        }
+        },
+        toastPayload: {
+          title: "Auction blocked",
+          description: `Rep ${minReputation}+ required`,
+          variant: "destructive",
+          duration: 2400,
+        },
       }
+    }
 
-      const clampedBid = Math.max(0, Math.min(prev.cash, Math.floor(maxBid)))
-      if (clampedBid < startingBid) {
-        return {
-          ...prev,
+    const clampedBid = Math.max(0, Math.min(state.cash, Math.floor(maxBid)))
+    if (clampedBid < 1) {
+      return {
+        next: {
+          ...state,
           pendingEncounter: null,
           messages: [
-            ...prev.messages,
+            ...state.messages,
             createMessage(
               `No bid placed. The lot closes at $${startingBid.toLocaleString()}.`,
               "info"
             ),
           ],
-        }
+        },
+        toastPayload: {
+          title: "No bid placed",
+          description: `Opening bid was $${startingBid.toLocaleString()}`,
+          duration: 2200,
+        },
       }
+    }
 
-      const increment = getAuctionIncrement(item.basePrice)
-      const opponentMax = simulateAuctionOpponentMax(item.basePrice, prev.runSeed, prev.day, prev.location)
-      const opponentWins = opponentMax >= clampedBid
-      const finalPrice = opponentWins
-        ? Math.max(startingBid, clampedBid + increment)
-        : Math.min(clampedBid, Math.max(startingBid, opponentMax + increment))
-
-      if (opponentWins) {
-        return {
-          ...prev,
+    const increment = getAuctionIncrement(item.basePrice)
+    const opponentMax = simulateAuctionOpponentMax(item.basePrice, state.runSeed, state.day, state.location)
+    const highestMax = Math.max(clampedBid, opponentMax)
+    if (highestMax < startingBid) {
+      return {
+        next: {
+          ...state,
           pendingEncounter: null,
           messages: [
-            ...prev.messages,
+            ...state.messages,
+            createMessage(
+              `Bidding fizzles out under the opening bid. PASSED at $${startingBid.toLocaleString()}.`,
+              "info"
+            ),
+          ],
+        },
+        toastPayload: {
+          title: "No sale",
+          description: `Opening bid was $${startingBid.toLocaleString()}`,
+          duration: 2400,
+        },
+      }
+    }
+    const opponentWins = opponentMax >= clampedBid
+    const finalPrice = opponentWins
+      ? Math.max(startingBid, clampedBid + increment)
+      : Math.min(clampedBid, Math.max(startingBid, opponentMax + increment))
+
+    if (opponentWins) {
+      return {
+        next: {
+          ...state,
+          pendingEncounter: null,
+          messages: [
+            ...state.messages,
             createMessage(
               `Bidding climbs past $${clampedBid.toLocaleString()}… SOLD (not to you).`,
               "warning"
             ),
           ],
-        }
+        },
+        toastPayload: {
+          title: "Outbid",
+          description: `Your max: $${clampedBid.toLocaleString()}`,
+          variant: "destructive",
+          duration: 2600,
+        },
       }
+    }
 
-      const premium = Math.round(finalPrice * buyerPremiumRate)
-      const totalCost = finalPrice + premium
-      if (totalCost > prev.cash) {
-        return {
-          ...prev,
+    const premium = Math.round(finalPrice * buyerPremiumRate)
+    const totalCost = finalPrice + premium
+    if (totalCost > state.cash) {
+      return {
+        next: {
+          ...state,
           pendingEncounter: null,
           messages: [
-            ...prev.messages,
+            ...state.messages,
             createMessage(
               `You win at $${finalPrice.toLocaleString()}, but the 5% buyer premium pushes it out of reach. The lot is forfeited.`,
               "warning"
             ),
           ],
-        }
+        },
+        toastPayload: {
+          title: "Won, but forfeited",
+          description: `Premium pushed total to $${totalCost.toLocaleString()}`,
+          variant: "destructive",
+          duration: 3000,
+        },
       }
+    }
 
-      const slotsUsed = computeSlotsUsed(prev.inventory)
-      if (slotsUsed + item.slots > prev.inventoryCapacity) {
-        return {
-          ...prev,
+    const slotsUsed = computeSlotsUsed(state.inventory)
+    if (slotsUsed + item.slots > state.inventoryCapacity) {
+      return {
+        next: {
+          ...state,
           pendingEncounter: null,
           messages: [
-            ...prev.messages,
+            ...state.messages,
             createMessage(
               "You win the auction… but your gig bag is full. The lot goes to the runner-up.",
               "warning"
             ),
           ],
-        }
+        },
+        toastPayload: {
+          title: "Won, but no space",
+          description: "Your case is full",
+          variant: "destructive",
+          duration: 2600,
+        },
       }
+    }
 
-      const owned: OwnedItem = {
-        ...item,
-        purchasePrice: totalCost,
-        heatValue: Math.round(item.hotRisk * 100),
-        acquiredDay: prev.day,
-        inspected: false,
-        authStatus: "none",
-        authMultiplier: 1,
-        insured: false,
-        insurancePaid: 0,
-        luthierStatus: "none",
-      }
+    const owned: OwnedItem = {
+      ...item,
+      purchasePrice: totalCost,
+      heatValue: Math.round(item.hotRisk * 100),
+      acquiredDay: state.day,
+      inspected: false,
+      authStatus: "none",
+      authMultiplier: 1,
+      insured: false,
+      insurancePaid: 0,
+      luthierStatus: "none",
+    }
 
-      return {
-        ...prev,
-        cash: prev.cash - totalCost,
-        inventory: [...prev.inventory, owned],
+    return {
+      next: {
+        ...state,
+        cash: state.cash - totalCost,
+        inventory: [...state.inventory, owned],
         pendingEncounter: null,
         messages: [
-          ...prev.messages,
+          ...state.messages,
           createMessage(`Bidding climbs… SOLD to you for $${finalPrice.toLocaleString()}.`, "success"),
           createMessage(`StringTree buyer premium (5%): $${premium.toLocaleString()}.`, "info"),
         ],
-      }
+      },
+      toastPayload: {
+        title: "Auction won",
+        description: `${item.name} • $${finalPrice.toLocaleString()} (+$${premium.toLocaleString()} premium)`,
+        duration: 3200,
+      },
+    }
+  }
+
+  const handleAuctionResolve = (maxBid: number) => {
+    const snapshot = gameStateRef.current
+    const auction =
+      snapshot.pendingEncounter && snapshot.pendingEncounter.type === "auction"
+        ? snapshot.pendingEncounter
+        : null
+    track("auction_bid", {
+      runSeed: snapshot.runSeed,
+      day: snapshot.day,
+      location: snapshot.location,
+      maxBid,
+      startingBid: auction?.startingBid,
+      itemCategory: auction?.item.category,
+      rarity: auction?.item.rarity,
     })
+
+    const { toastPayload } = resolveAuction(snapshot, maxBid)
+    const title = toastPayload?.title ?? "Unknown"
+    const outcome =
+      title === "Auction won"
+        ? "won"
+        : title === "Outbid"
+          ? "outbid"
+          : title === "No sale"
+            ? "passed"
+            : title === "No bid placed"
+              ? "no_bid"
+              : title === "Won, but forfeited"
+                ? "forfeited"
+                : title === "Won, but no space"
+                  ? "no_space"
+                  : title === "Auction blocked"
+                    ? "blocked"
+                    : "unknown"
+    track("auction_result", {
+      runSeed: snapshot.runSeed,
+      day: snapshot.day,
+      location: snapshot.location,
+      outcome,
+      toastTitle: title,
+      maxBid,
+      startingBid: auction?.startingBid,
+      itemCategory: auction?.item.category,
+      rarity: auction?.item.rarity,
+    })
+    setGameState((prev) => resolveAuction(prev, maxBid).next)
+    if (toastPayload) toast(toastPayload)
   }
 
   if (gameState.isGameOver) {
@@ -3803,8 +4078,8 @@ export default function FretWarsGame() {
                 }}
                 className="mt-2 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
               />
-              <p className="mt-2 text-xs text-muted-foreground">
-                Suggested: 21–30 days for a full run.
+      <p className="mt-2 text-xs text-muted-foreground">
+                Standard run: 21 days.
               </p>
             </div>
             <button
