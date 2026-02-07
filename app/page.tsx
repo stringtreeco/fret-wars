@@ -2017,6 +2017,15 @@ export default function FretWarsGame() {
   const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false)
   const [isSellModalOpen, setIsSellModalOpen] = useState(false)
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle")
+  const [scorePostStatus, setScorePostStatus] = useState<
+    | { state: "idle" }
+    | { state: "posting" }
+    | { state: "posted"; id: string; eligible: boolean }
+    | { state: "error"; message: string }
+  >({ state: "idle" })
+  const [scorePostName, setScorePostName] = useState("")
+  const [scorePostEmail, setScorePostEmail] = useState("")
+  const [scorePostOptIn, setScorePostOptIn] = useState(false)
   const [showStartMenu, setShowStartMenu] = useState(true)
   const [hasSavedGame, setHasSavedGame] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
@@ -2867,6 +2876,65 @@ export default function FretWarsGame() {
     }
   }
 
+  const handlePostScore = async () => {
+    if (scorePostStatus.state === "posting") return
+    if (!gameState.isGameOver) return
+
+    setScorePostStatus({ state: "posting" })
+    try {
+      const score = calculateScore(gameState.cash, gameState.inventory, gameState.market, gameState.reputation)
+      const payload = {
+        displayName: scorePostName.trim() || "Anonymous",
+        score,
+        runSeed: gameState.runSeed,
+        day: gameState.day,
+        totalDays: gameState.totalDays,
+        completed: true,
+        cash: gameState.cash,
+        reputation: gameState.reputation,
+        inventorySlotsUsed: computeSlotsUsed(gameState.inventory),
+        inventoryCapacity: gameState.inventoryCapacity,
+        bestFlip: gameState.bestFlip ?? undefined,
+        rarestSold: gameState.rarestSold ?? undefined,
+        email: scorePostEmail.trim() || undefined,
+        emailOptIn: scorePostOptIn,
+      }
+
+      const res = await fetch("/api/scores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const data = (await res.json().catch(() => null)) as
+        | null
+        | { ok: true; id: string; eligible: boolean }
+        | { ok: false; error?: string; detail?: string }
+
+      if (!res.ok || !data || data.ok === false) {
+        const detail = data && "detail" in data ? data.detail : undefined
+        const err = data && "error" in data ? data.error : undefined
+        const msg =
+          err === "server_not_configured"
+            ? "Score posting isn't configured yet (missing Supabase env vars)."
+            : detail || "Unable to post score."
+        setScorePostStatus({ state: "error", message: msg })
+        toast({ title: "Score not posted", description: msg, variant: "destructive", duration: 3200 })
+        return
+      }
+
+      setScorePostStatus({ state: "posted", id: data.id, eligible: data.eligible })
+      toast({
+        title: "Score posted",
+        description: data.eligible ? "Eligible for leaderboards." : "Posted, but not eligible for Top boards.",
+        duration: 3200,
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unknown error"
+      setScorePostStatus({ state: "error", message: msg })
+      toast({ title: "Score not posted", description: msg, variant: "destructive", duration: 3200 })
+    }
+  }
+
   const handleNewRun = () => {
     const newSeed =
       typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Date.now().toString()
@@ -2884,6 +2952,10 @@ export default function FretWarsGame() {
     })
     setGameState(fresh)
     setShareStatus("idle")
+    setScorePostStatus({ state: "idle" })
+    setScorePostName("")
+    setScorePostEmail("")
+    setScorePostOptIn(false)
     localStorage.removeItem(STORAGE_KEY)
     setHasSavedGame(false)
     setShowStartMenu(false)
@@ -4025,6 +4097,67 @@ export default function FretWarsGame() {
             </div>
           </div>
           <div className="space-y-2">
+            <div className="rounded-lg border border-border bg-card p-4 text-left">
+              <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Post your score
+              </div>
+              <div className="mt-3 space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <div className="text-[11px] text-muted-foreground">Display name</div>
+                    <input
+                      value={scorePostName}
+                      onChange={(e) => setScorePostName(e.target.value)}
+                      placeholder="Anonymous"
+                      className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-muted-foreground">Email (optional)</div>
+                    <input
+                      value={scorePostEmail}
+                      onChange={(e) => setScorePostEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
+                      inputMode="email"
+                    />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={scorePostOptIn}
+                    onChange={(e) => setScorePostOptIn(e.target.checked)}
+                  />
+                  Email me updates about Fret Wars.
+                </label>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <button
+                    onClick={handlePostScore}
+                    disabled={scorePostStatus.state === "posting" || scorePostStatus.state === "posted"}
+                    className="w-full rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {scorePostStatus.state === "posting"
+                      ? "Posting…"
+                      : scorePostStatus.state === "posted"
+                        ? "Posted"
+                        : "Post Score"}
+                  </button>
+                  <a
+                    href="/leaderboard"
+                    className="w-full rounded-md border border-border bg-secondary px-4 py-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-secondary/80"
+                  >
+                    Leaderboard
+                  </a>
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  Only completed 21-day standard runs are eligible for Top leaderboards.
+                </div>
+                {scorePostStatus.state === "error" && (
+                  <div className="text-xs text-destructive">{scorePostStatus.message}</div>
+                )}
+              </div>
+            </div>
             <button
               onClick={handleShare}
               className="w-full rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
