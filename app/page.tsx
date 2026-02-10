@@ -13,6 +13,7 @@ import { SellModal } from "@/components/game/sell-modal"
 import { DuelModal } from "@/components/game/duel-modal"
 import { EncounterModal } from "@/components/game/encounter-modal"
 import { PlayerAuctionModal } from "@/components/game/player-auction-modal"
+import { Slider } from "@/components/ui/slider"
 import { toast } from "@/hooks/use-toast"
 import { clearRunContext, setRunContext, track } from "@/lib/analytics"
 
@@ -2390,7 +2391,11 @@ export default function FretWarsGame() {
         const parsed = JSON.parse(savedState) as Partial<GameState>
         const fallback = createInitialGameState("seed")
         const merged = { ...fallback, ...parsed }
-        setRunLength(typeof merged.totalDays === "number" ? merged.totalDays : 21)
+        setRunLength(
+          typeof merged.totalDays === "number"
+            ? Math.max(7, Math.min(90, Math.round(merged.totalDays)))
+            : 21
+        )
         const inferredBagTier = (parsed.bagTier ?? inferBagTier(merged.inventoryCapacity ?? fallback.inventoryCapacity)) as BagTier
         const normalizedInventory = (parsed.inventory ?? fallback.inventory).map((item) => ({
           ...item,
@@ -4591,22 +4596,29 @@ export default function FretWarsGame() {
           </div>
           <div className="space-y-3">
             <div className="rounded-md border border-border bg-card p-3 text-left">
-              <label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                Run Length (Days)
-              </label>
-              <input
-                type="number"
+              <div className="flex items-center justify-between gap-4">
+                <label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  Run Length (Days)
+                </label>
+                <span className="text-sm font-semibold text-foreground tabular-nums">
+                  {runLength}
+                </span>
+              </div>
+
+              <Slider
                 min={7}
-                max={60}
-                value={runLength}
-                onChange={(event) => {
-                  const next = Number(event.target.value)
-                  if (Number.isNaN(next)) return
-                  setRunLength(Math.max(7, Math.min(60, Math.round(next))))
-                }}
-                className="mt-2 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+                max={90}
+                step={1}
+                value={[runLength]}
+                onValueChange={(value) => setRunLength(value[0] ?? 21)}
+                aria-label="Run length in days"
+                className="mt-3"
               />
-      <p className="mt-2 text-xs text-muted-foreground">
+              <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
+                <span>7</span>
+                <span>90</span>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
                 Standard run: 21 days.
               </p>
             </div>
@@ -4663,23 +4675,30 @@ export default function FretWarsGame() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
-      {/* Mobile Layout */}
-      <div className="flex flex-1 flex-col lg:hidden">
-        <Header onMenu={handleOpenMenu} />
-        <StatusBar gameState={gameState} />
-        <TerminalFeed
-          messages={gameState.messages}
-          terminalRef={terminalRef}
-          onScroll={handleTerminalScroll}
-        />
-        <MarketSection
-          items={gameState.market}
-          onItemSelect={handleItemSelect}
-          inspectedIds={gameState.inspectedMarketIds}
-          showDeals={gameState.tools.priceGuide}
-          isDeal={isSmokingDeal}
-        />
-        <ActionBar onAction={handleAction} />
+      {/* Mobile Layout: fixed viewport, terminal pinned at top, market scrolls below */}
+      <div className="flex h-dvh flex-col overflow-hidden lg:hidden">
+        <div className="shrink-0">
+          <Header onMenu={handleOpenMenu} />
+        </div>
+        <StatusBar gameState={gameState} className="shrink-0" />
+        <div className="shrink-0 h-[200px] min-h-0">
+          <TerminalFeed
+            messages={gameState.messages}
+            terminalRef={terminalRef}
+            className="h-full shrink-0"
+            onScroll={handleTerminalScroll}
+          />
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <MarketSection
+            items={gameState.market}
+            onItemSelect={handleItemSelect}
+            inspectedIds={gameState.inspectedMarketIds}
+            showDeals={gameState.tools.priceGuide}
+            isDeal={isSmokingDeal}
+          />
+        </div>
+        <ActionBar onAction={handleAction} className="shrink-0" />
       </div>
 
       {/* Desktop Layout */}

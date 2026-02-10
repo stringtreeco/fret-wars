@@ -3,6 +3,7 @@
 import type { EncounterState } from "@/app/page"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { Slider } from "@/components/ui/slider"
 import { useEffect, useRef, useState } from "react"
 
 interface EncounterModalProps {
@@ -48,6 +49,10 @@ export function EncounterModal({
   }
 
   const clampBidToCash = (bid: number) => Math.max(0, Math.min(cash, Math.floor(bid)))
+  const maxBidCap = Math.max(0, Math.floor(cash))
+  const sliderEnabled = maxBidCap >= 1
+  const sliderMax = Math.max(1, maxBidCap)
+  const currentBid = clampBidToCash(parseBid(maxBidInput))
 
   const getAuctionIncrementForDisplay = (basePrice: number) => {
     if (basePrice < 2000) return 25
@@ -58,7 +63,12 @@ export function EncounterModal({
 
   useEffect(() => {
     // Reset local UI state when the encounter changes.
-    setMaxBidInput("")
+    if (encounter.type === "auction") {
+      const suggested = clampBidToCash(Math.max(1, encounter.startingBid))
+      setMaxBidInput(String(suggested))
+    } else {
+      setMaxBidInput("")
+    }
     setAuctionPhase("entry")
     setLockedBid(null)
     setLiveBid(null)
@@ -289,19 +299,32 @@ export function EncounterModal({
             ) : auctionPhase === "entry" ? (
               <div className="space-y-2">
                 <div className="text-xs text-muted-foreground">Your max bid</div>
-                <input
-                  value={maxBidInput}
-                  onChange={(e) => {
-                    const next = e.target.value
-                    const bid = clampBidToCash(parseBid(next))
-                    setMaxBidInput(next.length ? String(bid) : "")
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-foreground tabular-nums">
+                    {formatMoney(sliderEnabled ? Math.max(1, currentBid) : 0)}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Cash on hand: <span className="text-foreground">{formatMoney(cash)}</span>
+                  </div>
+                </div>
+                <Slider
+                  min={1}
+                  max={sliderMax}
+                  step={1}
+                  value={[sliderEnabled ? Math.max(1, currentBid) : 1]}
+                  onValueChange={(value) => {
+                    const next = clampBidToCash(value[0] ?? 0)
+                    setMaxBidInput(String(Math.max(1, next)))
                   }}
-                  placeholder="$0"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
-                  inputMode="numeric"
+                  disabled={!sliderEnabled}
+                  aria-label="Max bid"
                 />
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>$1</span>
+                  <span>{formatMoney(maxBidCap)}</span>
+                </div>
                 <div className="text-[11px] text-muted-foreground">
-                  Cash on hand: <span className="text-foreground">{formatMoney(cash)}</span>
+                  Suggested quick bids (tap to set slider)
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <Button
