@@ -4752,11 +4752,12 @@ export default function FretWarsGame() {
               </button>
             </div>
             <TerminalFeed
-              messages={gameState.messages.slice(-10).reverse()}
+              messages={gameState.messages.slice(-10)}
               terminalRef={terminalRef}
               className="h-full flex-1 min-h-0 p-3"
               scrollMode="static"
               showCursor={false}
+              staticPinToBottom
             />
           </div>
         </div>

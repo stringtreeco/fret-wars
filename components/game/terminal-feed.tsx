@@ -9,6 +9,8 @@ interface TerminalFeedProps {
   onScroll?: () => void
   scrollMode?: "scroll" | "static"
   showCursor?: boolean
+  /** For static mode, keep newest lines visible without scrolling. */
+  staticPinToBottom?: boolean
 }
 
 export function TerminalFeed({
@@ -18,6 +20,7 @@ export function TerminalFeed({
   onScroll,
   scrollMode = "scroll",
   showCursor = true,
+  staticPinToBottom = true,
 }: TerminalFeedProps) {
   const typeStyles = {
     info: "text-muted-foreground",
@@ -33,6 +36,9 @@ export function TerminalFeed({
     event: "*",
   }
 
+  const staticBottomPinned = scrollMode === "static" && staticPinToBottom
+  const renderedMessages = staticBottomPinned ? [...messages].reverse() : messages
+
   return (
     <div
       className={cn(
@@ -44,13 +50,14 @@ export function TerminalFeed({
         ref={terminalRef}
         onScroll={onScroll}
         className={cn(
-          "flex h-full min-h-0 flex-col gap-2",
+          "flex h-full min-h-0 gap-2",
+          staticBottomPinned ? "flex-col-reverse" : "flex-col",
           scrollMode === "scroll"
             ? "fret-scrollbar overflow-y-auto"
             : "overflow-hidden"
         )}
       >
-        {messages.map((message) =>
+        {renderedMessages.map((message) =>
           message.isArt ? (
             <pre
               key={message.id}
