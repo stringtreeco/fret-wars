@@ -14,6 +14,7 @@ import { DuelModal } from "@/components/game/duel-modal"
 import { EncounterModal } from "@/components/game/encounter-modal"
 import { PlayerAuctionModal } from "@/components/game/player-auction-modal"
 import { Slider } from "@/components/ui/slider"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { toast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { clearRunContext, setRunContext, track } from "@/lib/analytics"
@@ -2213,6 +2214,7 @@ export default function FretWarsGame() {
   const [isSellModalOpen, setIsSellModalOpen] = useState(false)
   const [playerAuctionItemId, setPlayerAuctionItemId] = useState<string | null>(null)
   const [playerAuctionBaseline, setPlayerAuctionBaseline] = useState<number>(0)
+  const [isTerminalExpanded, setIsTerminalExpanded] = useState(false)
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle")
   const [scorePostStatus, setScorePostStatus] = useState<
     | { state: "idle" }
@@ -2233,6 +2235,7 @@ export default function FretWarsGame() {
   const trackedDuelKeyRef = useRef<string | null>(null)
   const lastAskProofToastRef = useRef<string | null>(null)
   const terminalRef = useRef<HTMLDivElement>(null)
+  const terminalExpandedRef = useRef<HTMLDivElement>(null)
   const didHydrateRef = useRef(false)
   const autoScrollRef = useRef(true)
   const isMobile = useIsMobile()
@@ -2479,6 +2482,15 @@ export default function FretWarsGame() {
       didHydrateRef.current = true
     }
   }, [gameState.messages, isMobile])
+
+  useEffect(() => {
+    if (!isTerminalExpanded) return
+    if (!terminalExpandedRef.current) return
+    const el = terminalExpandedRef.current
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+  }, [gameState.messages, isTerminalExpanded])
 
   const handleAction = (action: string) => {
     switch (action) {
@@ -4689,12 +4701,26 @@ export default function FretWarsGame() {
         </div>
         <StatusBar gameState={gameState} className="shrink-0" />
         <div className="shrink-0 h-[200px] min-h-0">
-          <TerminalFeed
-            messages={gameState.messages}
-            terminalRef={terminalRef}
-            className="h-full shrink-0"
-            onScroll={handleTerminalScroll}
-          />
+          <div className="flex h-full flex-col border-b border-border bg-background">
+            <div className="flex shrink-0 items-center justify-between px-4 py-2">
+              <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                Terminal
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsTerminalExpanded(true)}
+                className="rounded-md border border-border bg-secondary px-2 py-1 text-xs font-semibold text-foreground transition-colors hover:bg-secondary/80"
+              >
+                Expand
+              </button>
+            </div>
+            <TerminalFeed
+              messages={gameState.messages.slice(-10)}
+              terminalRef={terminalRef}
+              className="h-full flex-1 min-h-0 p-3"
+              scrollMode="static"
+            />
+          </div>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
           <MarketSection
@@ -4763,6 +4789,21 @@ export default function FretWarsGame() {
         onClose={() => setIsTravelModalOpen(false)}
         onTravel={handleTravel}
       />
+
+      <Dialog open={isTerminalExpanded} onOpenChange={setIsTerminalExpanded}>
+        <DialogContent className="fret-scrollbar max-h-[85vh] max-w-lg overflow-y-auto pr-1 border-border bg-card text-card-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-lg text-foreground">Terminal</DialogTitle>
+          </DialogHeader>
+          <TerminalFeed
+            messages={gameState.messages}
+            terminalRef={terminalExpandedRef}
+            className="h-[60vh] p-3"
+            scrollMode="scroll"
+            onScroll={handleTerminalScroll}
+          />
+        </DialogContent>
+      </Dialog>
 
       <InventoryModal
         isOpen={isInventoryModalOpen}

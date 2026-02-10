@@ -7,9 +7,16 @@ interface TerminalFeedProps {
   terminalRef: RefObject<HTMLDivElement | null>
   className?: string
   onScroll?: () => void
+  scrollMode?: "scroll" | "static"
 }
 
-export function TerminalFeed({ messages, terminalRef, className, onScroll }: TerminalFeedProps) {
+export function TerminalFeed({
+  messages,
+  terminalRef,
+  className,
+  onScroll,
+  scrollMode = "scroll",
+}: TerminalFeedProps) {
   const typeStyles = {
     info: "text-muted-foreground",
     warning: "text-accent",
@@ -34,7 +41,12 @@ export function TerminalFeed({ messages, terminalRef, className, onScroll }: Ter
       <div
         ref={terminalRef}
         onScroll={onScroll}
-        className="fret-scrollbar flex h-full max-h-[200px] min-h-0 flex-col gap-2 overflow-y-auto lg:max-h-none"
+        className={cn(
+          "flex h-full min-h-0 flex-col gap-2",
+          scrollMode === "scroll"
+            ? "fret-scrollbar max-h-[200px] overflow-y-auto lg:max-h-none"
+            : "overflow-hidden"
+        )}
       >
         {messages.map((message) =>
           message.isArt ? (
