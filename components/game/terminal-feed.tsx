@@ -46,7 +46,7 @@ export function TerminalFeed({
         className={cn(
           "flex h-full min-h-0 flex-col gap-2",
           scrollMode === "scroll"
-            ? "fret-scrollbar max-h-[200px] overflow-y-auto lg:max-h-none"
+            ? "fret-scrollbar overflow-y-auto"
             : "overflow-hidden"
         )}
       >

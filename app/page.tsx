@@ -2236,9 +2236,12 @@ export default function FretWarsGame() {
   const lastAskProofToastRef = useRef<string | null>(null)
   const terminalRef = useRef<HTMLDivElement>(null)
   const terminalExpandedRef = useRef<HTMLDivElement>(null)
+  const expandedAutoScrollRef = useRef(true)
+  const marketMobileScrollRef = useRef<HTMLDivElement>(null)
   const didHydrateRef = useRef(false)
   const autoScrollRef = useRef(true)
   const isMobile = useIsMobile()
+  const lastLocationRef = useRef(gameState.location)
   const isSelectedInspected = selectedItem
     ? gameState.inspectedMarketIds.includes(selectedItem.id)
     : false
@@ -2460,6 +2463,16 @@ export default function FretWarsGame() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState))
   }, [gameState])
 
+  useEffect(() => {
+    // When traveling to a new location, reset mobile market scroll to the top.
+    if (!isMobile) return
+    if (lastLocationRef.current === gameState.location) return
+    lastLocationRef.current = gameState.location
+    requestAnimationFrame(() => {
+      marketMobileScrollRef.current?.scrollTo({ top: 0 })
+    })
+  }, [gameState.location, isMobile])
+
   const handleTerminalScroll = () => {
     if (!terminalRef.current) return
     const el = terminalRef.current
@@ -2483,12 +2496,36 @@ export default function FretWarsGame() {
     }
   }, [gameState.messages, isMobile])
 
+  const handleExpandedTerminalScroll = () => {
+    const el = terminalExpandedRef.current
+    if (!el) return
+    const remaining = Math.max(0, el.scrollHeight - el.scrollTop - el.clientHeight)
+    expandedAutoScrollRef.current = remaining < 80
+  }
+
+  const scrollExpandedTerminalToBottom = () => {
+    const el = terminalExpandedRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }
+
   useEffect(() => {
     if (!isTerminalExpanded) return
-    if (!terminalExpandedRef.current) return
-    const el = terminalExpandedRef.current
+    // Radix Dialog content mounts via a portal; ensure the ref exists before scrolling.
+    const t = window.setTimeout(() => {
+      requestAnimationFrame(() => {
+        scrollExpandedTerminalToBottom()
+        requestAnimationFrame(scrollExpandedTerminalToBottom)
+      })
+    }, 0)
+    return () => window.clearTimeout(t)
+  }, [isTerminalExpanded])
+
+  useEffect(() => {
+    if (!isTerminalExpanded) return
+    if (!expandedAutoScrollRef.current) return
     requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight
+      scrollExpandedTerminalToBottom()
     })
   }, [gameState.messages, isTerminalExpanded])
 
@@ -4723,7 +4760,7 @@ export default function FretWarsGame() {
             />
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div ref={marketMobileScrollRef} className="flex-1 min-h-0 overflow-y-auto">
           <MarketSection
             items={gameState.market}
             onItemSelect={handleItemSelect}
@@ -4801,7 +4838,7 @@ export default function FretWarsGame() {
             terminalRef={terminalExpandedRef}
             className="h-[60vh] p-3"
             scrollMode="scroll"
-            onScroll={handleTerminalScroll}
+            onScroll={handleExpandedTerminalScroll}
           />
         </DialogContent>
       </Dialog>
