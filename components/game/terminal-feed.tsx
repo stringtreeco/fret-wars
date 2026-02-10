@@ -8,6 +8,7 @@ interface TerminalFeedProps {
   className?: string
   onScroll?: () => void
   scrollMode?: "scroll" | "static"
+  showCursor?: boolean
 }
 
 export function TerminalFeed({
@@ -16,6 +17,7 @@ export function TerminalFeed({
   className,
   onScroll,
   scrollMode = "scroll",
+  showCursor = true,
 }: TerminalFeedProps) {
   const typeStyles = {
     info: "text-muted-foreground",
@@ -74,9 +76,11 @@ export function TerminalFeed({
             </div>
           )
         )}
-        <div className="flex items-center gap-1 text-primary">
-          <span className="animate-pulse">_</span>
-        </div>
+        {showCursor && (
+          <div className="flex items-center gap-1 text-primary">
+            <span className="animate-pulse">_</span>
+          </div>
+        )}
       </div>
     </div>
   )
