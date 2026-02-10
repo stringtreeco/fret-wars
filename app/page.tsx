@@ -15,6 +15,7 @@ import { EncounterModal } from "@/components/game/encounter-modal"
 import { PlayerAuctionModal } from "@/components/game/player-auction-modal"
 import { Slider } from "@/components/ui/slider"
 import { toast } from "@/hooks/use-toast"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { clearRunContext, setRunContext, track } from "@/lib/analytics"
 
 export type HeatLevel = "Low" | "Medium" | "High"
@@ -2234,6 +2235,7 @@ export default function FretWarsGame() {
   const terminalRef = useRef<HTMLDivElement>(null)
   const didHydrateRef = useRef(false)
   const autoScrollRef = useRef(true)
+  const isMobile = useIsMobile()
   const isSelectedInspected = selectedItem
     ? gameState.inspectedMarketIds.includes(selectedItem.id)
     : false
@@ -2458,20 +2460,25 @@ export default function FretWarsGame() {
   const handleTerminalScroll = () => {
     if (!terminalRef.current) return
     const el = terminalRef.current
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    autoScrollRef.current = isNearBottom
+    if (isMobile) {
+      // Mobile nested scrolling is finicky; keep terminal pinned to latest.
+      autoScrollRef.current = true
+      return
+    }
+    const remaining = Math.max(0, el.scrollHeight - el.scrollTop - el.clientHeight)
+    autoScrollRef.current = remaining < 80
   }
 
   useEffect(() => {
     if (!terminalRef.current) return
     const el = terminalRef.current
-    if (!didHydrateRef.current || autoScrollRef.current) {
+    if (isMobile || !didHydrateRef.current || autoScrollRef.current) {
       requestAnimationFrame(() => {
         el.scrollTop = el.scrollHeight
       })
       didHydrateRef.current = true
     }
-  }, [gameState.messages])
+  }, [gameState.messages, isMobile])
 
   const handleAction = (action: string) => {
     switch (action) {
