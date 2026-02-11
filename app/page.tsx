@@ -1118,17 +1118,17 @@ const marketCatalog = [
 ]
 
 const marketShiftEvents = [
-  { id: "hype", text: "Influencer hype nudges boutique prices upward." },
-  { id: "estate_glut", text: "Estate sale glut lowers vintage asking prices." },
-  { id: "pawn_flush", text: "Pawn shops are flush after a touring weekend." },
-  { id: "collectors_quiet", text: "Collectors are quiet today. Not as much competition for deals." },
-  { id: "audit_nerves", text: "Word is a shop just got audited. Sellers are nervous." },
+  { id: "hype", text: "Influencer buzz is driving boutique gear prices up." },
+  { id: "estate_glut", text: "A wave of estate sales is pushing vintage prices down." },
+  { id: "pawn_flush", text: "Touring musicians just got home. Pawn shops are packed with gear." },
+  { id: "collectors_quiet", text: "Collectors are out of town at a conference. Less competition for local deals." },
+  { id: "audit_nerves", text: "Rumor has it a shop got audited. Sellers are feeling cautious." },
 ] as const
 
 type MarketShiftEvent = (typeof marketShiftEvents)[number]
 
 const repoMessages = [
-  "A venue manager runs serial checks. Provenance gets tense.",
+  "A venue manager runs serial checks. Paper trail gets tense.",
   "A consignment shop pauses intake after a provenance sweep.",
   "Buyers back out after a listing audit.",
   "A recovery agent is asking around for missing gear.",
@@ -1985,8 +1985,22 @@ const buildSpecialListingFromPool = (
   } satisfies MarketItem
 }
 
+const createRunSeed = () => {
+  if (typeof crypto !== "undefined") {
+    if ("randomUUID" in crypto) return crypto.randomUUID()
+    if ("getRandomValues" in crypto) {
+      const bytes = new Uint8Array(16)
+      crypto.getRandomValues(bytes)
+      return Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("")
+    }
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 const pickIntroBundle = (runSeed: string, day: number, location: string) => {
-  const rng = mulberry32(hashSeed(`${runSeed}-intro`))
+  const rng = mulberry32(hashSeed(`${runSeed}-intro-${day}-${location}`))
   const pool = [...introMessagePool]
   const shuffled: typeof introMessagePool = []
   while (pool.length) {
@@ -2205,7 +2219,7 @@ const createInitialGameState = (runSeed: string, totalDays = 21): GameState => {
 }
 
 export default function FretWarsGame() {
-  const [gameState, setGameState] = useState<GameState>(() => createInitialGameState("seed"))
+  const [gameState, setGameState] = useState<GameState>(() => createInitialGameState(createRunSeed()))
   const [selectedItem, setSelectedItem] = useState<MarketItem | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [insuranceSelected, setInsuranceSelected] = useState(false)
@@ -2449,12 +2463,10 @@ export default function FretWarsGame() {
           },
         })
       } catch {
-        setGameState(createInitialGameState("seed"))
+        setGameState(createInitialGameState(createRunSeed()))
       }
     } else {
-      const newSeed =
-        typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Date.now().toString()
-      setGameState(createInitialGameState(newSeed, runLength))
+      setGameState(createInitialGameState(createRunSeed(), runLength))
       setHasSavedGame(false)
     }
   }, [])
@@ -3284,9 +3296,7 @@ export default function FretWarsGame() {
   }
 
   const handleNewRun = () => {
-    const newSeed =
-      typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Date.now().toString()
-    const fresh = createInitialGameState(newSeed, runLength)
+    const fresh = createInitialGameState(createRunSeed(), runLength)
     trackedRunCompleteRef.current = null
     trackedEncounterKeyRef.current = null
     trackedDuelKeyRef.current = null

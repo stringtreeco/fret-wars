@@ -405,7 +405,7 @@ export function InventoryModal({
                           </span>
                           <span>{item.rarity}</span>
                           <span>Slots: {item.slots}</span>
-                          <span>Provenance: {heatLabel}</span>
+                          <span>Paper Trail: {heatLabel}</span>
                           <span>{authLabel}</span>
                           {luthierLabel && <span>{luthierLabel}</span>}
                           {item.insured && <span>Insured</span>}

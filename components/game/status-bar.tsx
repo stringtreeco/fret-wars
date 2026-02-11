@@ -15,6 +15,8 @@ export function StatusBar({ gameState, className }: StatusBarProps) {
   const bagLabel =
     gameState.bagTier === 2 ? "Flight Case" : gameState.bagTier === 1 ? "Hard Case" : "Gig Bag"
   const debt = gameState.creditLine?.loan?.balanceDue ?? 0
+  const totalHeat = gameState.inventory.reduce((sum, item) => sum + item.heatValue, 0)
+  const showPaperTrailNA = totalHeat <= 0
 
   return (
     <div className={cn("bg-card", className)}>
@@ -69,15 +71,21 @@ export function StatusBar({ gameState, className }: StatusBarProps) {
               </div>
 
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Provenance</span>
-                <span
-                  className={cn(
-                    "rounded px-2 py-0.5 text-xs font-medium",
-                    heatColors[gameState.heatLevel]
-                  )}
-                >
-                  {gameState.heatLevel}
-                </span>
+                <span className="text-muted-foreground">Paper Trail</span>
+                {showPaperTrailNA ? (
+                  <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                    N/A
+                  </span>
+                ) : (
+                  <span
+                    className={cn(
+                      "rounded px-2 py-0.5 text-xs font-medium",
+                      heatColors[gameState.heatLevel]
+                    )}
+                  >
+                    {gameState.heatLevel}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -139,15 +147,21 @@ export function StatusBar({ gameState, className }: StatusBarProps) {
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Provenance</span>
-            <span
-              className={cn(
-                "rounded px-2 py-0.5 text-xs font-medium",
-                heatColors[gameState.heatLevel]
-              )}
-            >
-              {gameState.heatLevel}
-            </span>
+            <span className="text-muted-foreground">Paper Trail</span>
+            {showPaperTrailNA ? (
+              <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                N/A
+              </span>
+            ) : (
+              <span
+                className={cn(
+                  "rounded px-2 py-0.5 text-xs font-medium",
+                  heatColors[gameState.heatLevel]
+                )}
+              >
+                {gameState.heatLevel}
+              </span>
+            )}
           </div>
         </div>
       </div>
