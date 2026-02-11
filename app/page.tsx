@@ -3307,6 +3307,12 @@ export default function FretWarsGame() {
     localStorage.removeItem(STORAGE_KEY)
     setHasSavedGame(false)
     setShowStartMenu(false)
+    // On mobile, open the expanded terminal on first load so players see the intro
+    // (and learn that it can be expanded).
+    if (isMobile) {
+      expandedAutoScrollRef.current = true
+      setIsTerminalExpanded(true)
+    }
   }
 
   const handleOpenMenu = () => {
