@@ -1999,6 +1999,9 @@ const createRunSeed = () => {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+const MAX_INTRO_MARKET_CONDITIONS = 2
+const MAX_DAILY_MARKET_CONDITIONS = 2
+
 const pickIntroBundle = (runSeed: string, day: number, location: string) => {
   const rng = mulberry32(hashSeed(`${runSeed}-intro-${day}-${location}`))
   const pool = [...introMessagePool]
@@ -2007,7 +2010,7 @@ const pickIntroBundle = (runSeed: string, day: number, location: string) => {
     const index = Math.floor(rng() * pool.length)
     shuffled.push(pool.splice(index, 1)[0])
   }
-  const intro = shuffled.slice(0, 3)
+  const intro = shuffled.slice(0, MAX_INTRO_MARKET_CONDITIONS)
   const messages: TerminalMessage[] = [
     { id: `${runSeed}-intro-0`, text: "Welcome to Fret Wars. The gear market awaits.", type: "info" },
     ...intro.map((message, index) => ({
@@ -3116,14 +3119,16 @@ export default function FretWarsGame() {
         ...extraMessages,
         createMessage(`--- Day ${nextDay} --- ${nextLocation} ---`, "event", true),
         createMessage(`Day ${nextDay} begins. New deals appear...`, "event"),
-        ...(shiftEvent.id === "pawn_flush" ? [createMessage(ASCII_ART.pawnDeal, "event", true)] : []),
-        ...(shiftEvent.id === "hype" ? [createMessage(ASCII_ART.hype, "event", true)] : []),
-        ...(shiftEvent.id === "estate_glut" ? [createMessage(ASCII_ART.estate, "event", true)] : []),
-        ...(shiftEvent.id === "collectors_quiet"
-          ? [createMessage(ASCII_ART.collectorsQuiet, "info", true)]
-          : []),
-        createMessage(shiftEvent.text, "event"),
-        createMessage(recapMessage, "info"),
+        ...[
+          createMessage(shiftEvent.text, "event"),
+          createMessage(recapMessage, "info"),
+          ...(shiftEvent.id === "pawn_flush" ? [createMessage(ASCII_ART.pawnDeal, "event", true)] : []),
+          ...(shiftEvent.id === "hype" ? [createMessage(ASCII_ART.hype, "event", true)] : []),
+          ...(shiftEvent.id === "estate_glut" ? [createMessage(ASCII_ART.estate, "event", true)] : []),
+          ...(shiftEvent.id === "collectors_quiet"
+            ? [createMessage(ASCII_ART.collectorsQuiet, "info", true)]
+            : []),
+        ].slice(0, MAX_DAILY_MARKET_CONDITIONS),
         ...creditMessages,
         ...authMessages,
         ...luthierMessages,
@@ -3239,6 +3244,15 @@ export default function FretWarsGame() {
   const handlePostScore = async () => {
     if (scorePostStatus.state === "posting") return
     if (!gameState.isGameOver) return
+    if (gameState.totalDays !== 21) {
+      toast({
+        title: "Standard run required",
+        description: "Scores can only be posted for completed 21-day standard runs.",
+        variant: "destructive",
+        duration: 3200,
+      })
+      return
+    }
 
     setScorePostStatus({ state: "posting" })
     try {
@@ -4520,6 +4534,7 @@ export default function FretWarsGame() {
       gameState.market,
       gameState.reputation
     )
+    const isStandardRun = gameState.totalDays === 21
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center bg-background p-6 text-center">
         <div className="max-w-lg space-y-4">
@@ -4571,64 +4586,81 @@ export default function FretWarsGame() {
           <div className="space-y-2">
             <div className="rounded-lg border border-border bg-card p-4 text-left">
               <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                Post your score
+                {isStandardRun ? "Post your score" : "Leaderboards"}
               </div>
-              <div className="mt-3 space-y-2">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div>
-                    <div className="text-[11px] text-muted-foreground">Display name</div>
-                    <input
-                      value={scorePostName}
-                      onChange={(e) => setScorePostName(e.target.value)}
-                      placeholder="Anonymous"
-                      className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
-                    />
+              {isStandardRun ? (
+                <div className="mt-3 space-y-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <div className="text-[11px] text-muted-foreground">Display name</div>
+                      <input
+                        value={scorePostName}
+                        onChange={(e) => setScorePostName(e.target.value)}
+                        placeholder="Anonymous"
+                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-muted-foreground">Email (optional)</div>
+                      <input
+                        value={scorePostEmail}
+                        onChange={(e) => setScorePostEmail(e.target.value)}
+                        placeholder="you@example.com"
+                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
+                        inputMode="email"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-[11px] text-muted-foreground">Email (optional)</div>
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
                     <input
-                      value={scorePostEmail}
-                      onChange={(e) => setScorePostEmail(e.target.value)}
-                      placeholder="you@example.com"
-                      className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none"
-                      inputMode="email"
+                      type="checkbox"
+                      checked={scorePostOptIn}
+                      onChange={(e) => setScorePostOptIn(e.target.checked)}
                     />
+                    Email me updates about Fret Wars.
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <button
+                      onClick={handlePostScore}
+                      disabled={scorePostStatus.state === "posting" || scorePostStatus.state === "posted"}
+                      className="w-full rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {scorePostStatus.state === "posting"
+                        ? "Posting…"
+                        : scorePostStatus.state === "posted"
+                          ? "Posted"
+                          : "Post Score"}
+                    </button>
+                    <a
+                      href="/leaderboard"
+                      className="w-full rounded-md border border-border bg-secondary px-4 py-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-secondary/80"
+                    >
+                      Leaderboard
+                    </a>
                   </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Only completed 21-day standard runs can be posted to the leaderboard.
+                  </div>
+                  {scorePostStatus.state === "error" && (
+                    <div className="text-xs text-destructive">{scorePostStatus.message}</div>
+                  )}
                 </div>
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={scorePostOptIn}
-                    onChange={(e) => setScorePostOptIn(e.target.checked)}
-                  />
-                  Email me updates about Fret Wars.
-                </label>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <button
-                    onClick={handlePostScore}
-                    disabled={scorePostStatus.state === "posting" || scorePostStatus.state === "posted"}
-                    className="w-full rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {scorePostStatus.state === "posting"
-                      ? "Posting…"
-                      : scorePostStatus.state === "posted"
-                        ? "Posted"
-                        : "Post Score"}
-                  </button>
+              ) : (
+                <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+                  <div>
+                    Posting scores is only available for completed <span className="text-foreground font-semibold">21-day standard runs</span>.
+                  </div>
+                  <div className="text-xs">
+                    This run length: <span className="text-foreground font-semibold">{gameState.totalDays} days</span>
+                  </div>
                   <a
                     href="/leaderboard"
-                    className="w-full rounded-md border border-border bg-secondary px-4 py-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-secondary/80"
+                    className="block w-full rounded-md border border-border bg-secondary px-4 py-3 text-center text-sm font-semibold text-foreground transition-colors hover:bg-secondary/80"
                   >
-                    Leaderboard
+                    View Leaderboard
                   </a>
                 </div>
-                <div className="text-[11px] text-muted-foreground">
-                  Only completed 21-day standard runs are eligible for Top leaderboards.
-                </div>
-                {scorePostStatus.state === "error" && (
-                  <div className="text-xs text-destructive">{scorePostStatus.message}</div>
-                )}
-              </div>
+              )}
             </div>
             <button
               onClick={handleShare}
