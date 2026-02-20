@@ -4825,9 +4825,12 @@ export default function FretWarsGame() {
         </div>
         <StatusBar gameState={gameState} className="shrink-0" />
         <div className="shrink-0 h-[200px] min-h-0">
-          <div className="flex h-full flex-col border-b border-border bg-background">
-            <div className="flex shrink-0 items-center justify-between px-4 py-2">
-              <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          <div className="flex h-full flex-col border-b border-border bg-card/40">
+            <div className="flex shrink-0 items-center justify-between border-b border-border/60 bg-background/80 px-4 py-2 backdrop-blur">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                <span aria-hidden="true" className="text-primary/80">
+                  {">_"}
+                </span>
                 Terminal
               </span>
               <button

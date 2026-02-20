@@ -40,7 +40,10 @@ export function MarketSection({
   return (
     <div className="border-t border-border bg-card p-4 lg:border-t-0">
       <div className="sticky top-0 z-10 -mx-4 -mt-4 border-b border-border/60 bg-card/95 px-4 pt-4 pb-3 shadow-sm shadow-black/10 backdrop-blur supports-[backdrop-filter]:bg-card/80">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <h2 className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <span aria-hidden="true" className="text-primary/80">
+            $
+          </span>
           Market
         </h2>
       </div>
