@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { StringTreeLink } from "@/components/stringtree-link"
 
 type Row = {
   id: string
@@ -60,12 +61,20 @@ export default function LeaderboardPage() {
               Top runs are limited to completed 21-day standard runs.
             </p>
           </div>
-          <a
-            href="/"
-            className="rounded-md border border-border bg-secondary px-3 py-2 text-sm font-semibold text-foreground hover:bg-secondary/80"
-          >
-            Back
-          </a>
+          <div className="flex flex-col items-end gap-2">
+            <StringTreeLink
+              source="leaderboard_header"
+              variant="dark"
+              className="opacity-95 hover:opacity-100"
+              logoClassName="h-[18px]"
+            />
+            <a
+              href="/"
+              className="rounded-md border border-border bg-secondary px-3 py-2 text-sm font-semibold text-foreground hover:bg-secondary/80"
+            >
+              Back
+            </a>
+          </div>
         </div>
 
         {emptyState ? (

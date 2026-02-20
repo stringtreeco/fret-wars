@@ -15,6 +15,7 @@ import { EncounterModal } from "@/components/game/encounter-modal"
 import { PlayerAuctionModal } from "@/components/game/player-auction-modal"
 import { Slider } from "@/components/ui/slider"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { StringTreeLink } from "@/components/stringtree-link"
 import { toast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { clearRunContext, setRunContext, track } from "@/lib/analytics"
@@ -1371,6 +1372,8 @@ const duelOptions: DuelOption[] = [
   { id: "pocket", label: "Tasteful Pocket", playerBonus: 4, variance: 20, repBonusOnWin: 2 },
   { id: "crowd", label: "Crowd Pleaser", playerBonus: 8, variance: 35, repBonusOnWin: 1 },
 ]
+
+const DUEL_WIDE_MISS_AUTO_FAIL_ACCURACY = 0.2
 
 const getDuelRounds = (challengerId: string) => {
   switch (challengerId) {
@@ -3344,6 +3347,7 @@ export default function FretWarsGame() {
   }
 
   const resolveDuel = (option: DuelOption, accuracy = 0.5) => {
+    const clampedInputAccuracy = clamp(accuracy, 0, 1)
     track("duel_choice", {
       runSeed: gameState.runSeed,
       day: gameState.day,
@@ -3352,7 +3356,8 @@ export default function FretWarsGame() {
       round: gameState.pendingDuel?.round,
       totalRounds: gameState.pendingDuel?.totalRounds,
       optionId: option.id,
-      accuracy,
+      accuracy: clampedInputAccuracy,
+      autoFailWideMiss: clampedInputAccuracy <= DUEL_WIDE_MISS_AUTO_FAIL_ACCURACY,
       usedBoost: Boolean(gameState.pendingDuel?.selectedBoostId),
     })
     setGameState((prev) => {
@@ -3373,7 +3378,7 @@ export default function FretWarsGame() {
       const gearBonus = (hasGuitar ? 6 : 0) + (hasAmp ? 4 : 0)
       const heatPenalty = prev.heatLevel === "High" ? 10 : prev.heatLevel === "Medium" ? 5 : 0
 
-      const clampedAccuracy = clamp(accuracy, 0, 1)
+      const clampedAccuracy = clampedInputAccuracy
       const timingScale = 16 + prev.pendingDuel.round * 3 + (prev.pendingDuel.totalRounds - 1) * 2
       const timingBonus = (clampedAccuracy - 0.5) * timingScale
       const varianceScale = 1 - clampedAccuracy * 0.45
@@ -3399,7 +3404,9 @@ export default function FretWarsGame() {
               ? "Close — you graze the pocket."
               : clampedAccuracy >= 0.38
                 ? "Miss — you drift off the pocket."
-                : "Bad miss — you whiff the pocket."
+                : clampedAccuracy > DUEL_WIDE_MISS_AUTO_FAIL_ACCURACY
+                  ? "Bad miss — you whiff the pocket."
+                  : "Critical miss — you blow the pocket."
       const crowdNote =
         roundDiff > 8
           ? "The crowd leans your way."
@@ -3411,6 +3418,28 @@ export default function FretWarsGame() {
       const nextPerformanceItems = selectedBoost
         ? prev.performanceItems.filter((item) => item.id !== selectedBoost.id)
         : prev.performanceItems
+
+      if (clampedAccuracy <= DUEL_WIDE_MISS_AUTO_FAIL_ACCURACY) {
+        const wager = prev.pendingDuel.wagerAmount
+        const nextCash = Math.max(0, prev.cash - wager)
+        const nextRep = clamp(prev.reputation - challenger.repLoss, 0, 100)
+        const duelMessages: TerminalMessage[] = [
+          createMessage(ASCII_ART.duelLose, "warning", true),
+          createMessage("Critical miss. The challenge ends immediately.", "warning"),
+          createMessage(randomFrom(challenger.lose), "warning"),
+        ]
+        if (wager) {
+          duelMessages.push(createMessage(`You lose the $${wager} wager.`, "warning"))
+        }
+        return {
+          ...prev,
+          cash: nextCash,
+          reputation: nextRep,
+          performanceItems: nextPerformanceItems,
+          pendingDuel: null,
+          messages: [...prev.messages, ...duelMessages],
+        }
+      }
 
       if (prev.pendingDuel.round < prev.pendingDuel.totalRounds) {
         const signaturePick =
@@ -4681,7 +4710,14 @@ export default function FretWarsGame() {
               <p className="text-xs text-destructive">Unable to access clipboard.</p>
             )}
           </div>
-          <p className="text-xs text-muted-foreground">A StringTree Game</p>
+          <StringTreeLink
+            source="end_screen_tagline"
+            variant="dark"
+            className="mx-auto opacity-95 hover:opacity-100"
+            logoClassName="h-5"
+            description="Buy and sell real gear on StringTree"
+            descriptionClassName="text-[11px] sm:text-xs"
+          />
         </div>
       </div>
     )
@@ -4692,7 +4728,14 @@ export default function FretWarsGame() {
       <div className="flex min-h-dvh flex-col items-center justify-center bg-background p-6 text-center">
         <div className="max-w-md space-y-5">
           <div>
-            <p className="text-xs uppercase tracking-widest text-muted-foreground">A StringTree Game</p>
+            <StringTreeLink
+              source="start_menu_tagline"
+              variant="dark"
+              className="mx-auto opacity-95 hover:opacity-100"
+              logoClassName="h-5"
+              description="Buy and sell real gear on StringTree"
+              descriptionClassName="text-[11px] sm:text-xs"
+            />
             <h1 className="text-3xl font-bold text-primary">Fret Wars</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Trade guitars, amps, pedals, and parts across the city. Buy low, sell high, keep it legit.
@@ -4718,10 +4761,6 @@ export default function FretWarsGame() {
                 aria-label="Run length in days"
                 className="mt-3"
               />
-              <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
-                <span>7</span>
-                <span>90</span>
-              </div>
               <p className="mt-2 text-xs text-muted-foreground">
                 Standard run: 21 days.
               </p>

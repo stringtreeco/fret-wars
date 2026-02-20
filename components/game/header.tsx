@@ -1,3 +1,5 @@
+import { StringTreeLink } from "@/components/stringtree-link"
+
 interface HeaderProps {
   onMenu?: () => void
 }
@@ -10,9 +12,12 @@ export function Header({ onMenu }: HeaderProps) {
           <h1 className="text-xl font-bold tracking-tight text-primary">
             FRET WARS
           </h1>
-          <p className="text-xs tracking-widest text-muted-foreground">
-            A StringTree Game
-          </p>
+          <StringTreeLink
+            source="header_tagline"
+            variant="dark"
+            className="ml-0.5 mt-0.5 opacity-95 hover:opacity-100"
+            logoClassName="h-4 sm:h-[17px] lg:h-[18px]"
+          />
         </div>
         {onMenu && (
           <button
